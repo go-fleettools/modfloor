@@ -1,0 +1,125 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ⛔ A WORKFLOW THAT FAILS TO PARSE REPORTS NOTHING AT ALL -- no red cross, no
+  # jobs, and `gh pr checks` answers "no checks reported on the branch", which
+  # reads exactly like a check that has not started yet. actionlint is the only
+  # thing that catches it, so it is the first lane.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  test:
+    name: build + vet + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # ⛔ go-version-file, NOT a literal. This repository exists to measure the
+      # gap between what CI builds with and what go.mod declares; a lane that
+      # pinned a literal here would be able to drift from the directive it
+      # judges, which is the exact defect this tool reports.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # ⛔ SAY WHICH TOOLCHAIN RAN. A green check that does not record the
+      # compiler behind it makes every figure measured under it unattributable.
+      - run: go version
+      - name: gofmt
+        run: |
+          drift=$(gofmt -l .)
+          if [ -n "$drift" ]; then echo "::error::not gofmt-clean:"; echo "$drift"; exit 1; fi
+      - name: build
+        run: CGO_ENABLED=0 go build ./...
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -timeout 10m ./...
+
+      # ⛔ The two platforms nothing here compiles for. `go vet` cross-compiles,
+      # so this costs seconds and no second runner. debug/buildinfo and the
+      # .git-file handling in owner.go are both places where a path separator
+      # assumption would only show up off linux.
+      - name: vet for windows
+        run: GOOS=windows go vet ./...
+      - name: vet for darwin
+        run: GOOS=darwin go vet ./...
+
+      # ⛔ NO `set -o pipefail` HERE, deliberately. govulncheck exits non-zero
+      # over findings it has decided this module does not call, and exits ZERO
+      # over some it has -- which is the whole reason vulngate exists. pipefail
+      # would hand the lane back to the status that cannot answer the question.
+      # An unread scan is caught instead by the emptiness check below and by
+      # vulngate, which believes a run only when it carried a config AND an SBOM.
+      #
+      # ⛔ -go holds the scan to the toolchain it actually ran under, from
+      # `go env GOVERSION` and not from a literal: the standard library is
+      # judged by one version, and a lane that silently resolved another
+      # answered a different question.
+      #
+      # ⛔ vulngate IS PINNED, and to v0.20.1 rather than @latest. A gate judged
+      # by a tool two minors behind is the defect the gate exists to catch --
+      # found on 2026-10-18 in two sibling lanes still pinning v0.18.1 while the
+      # proxy served v0.20.1. @latest would fix that by never being pinned, and
+      # would also make this lane's verdict depend on a release nobody here
+      # reviewed.
+      - name: govulncheck, judged by vulngate
+        run: |
+          set -eu
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/go-fleettools/fleettools/cmd/vulngate@v0.20.1
+          "$(go env GOPATH)/bin/govulncheck" -format json ./... > /tmp/vuln.json || true
+          test -s /tmp/vuln.json || { echo "::error::govulncheck wrote nothing at all"; exit 1; }
+          "$(go env GOPATH)/bin/vulngate" -go "$(go env GOVERSION)" /tmp/vuln.json
+
+  # ⛔ The tool measures the floor of OTHER modules; this lane points it at
+  # itself. A capability nothing invokes is documented, not deployed -- and a
+  # measurement tool that has never been run against a known answer is a
+  # measurement tool nobody has checked.
+  self:
+    name: modfloor measures itself
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go version
+      - name: this module must be at the floor it recommends
+        run: |
+          set -eu
+          go build -o /tmp/modfloor .
+          # --offline: the proxy's copy of THIS branch does not exist yet, so
+          # the working tree is the only thing there is to judge. Without it the
+          # lane would report "unpublished" on every pull request.
+          /tmp/modfloor --dir . --offline --floor 1.27.2
+      - name: and the exposure it exists to find must still be found
+        run: |
+          set -eu
+          # The planted positive. A guard nobody has seen fire is a guard that
+          # may not fire: this builds a module below the floor in a work tree of
+          # its own and requires exit status 1.
+          mkdir -p /tmp/below/.git
+          printf '[remote "origin"]\n\turl = https://github.com/go-fleettools/planted.git\n' > /tmp/below/.git/config
+          printf 'module example.com/below\n\ngo 1.27.1\n' > /tmp/below/go.mod
+          if /tmp/modfloor --dir /tmp/below --offline --floor 1.27.2; then
+            echo "::error::modfloor reported a module declaring go 1.27.1 as clean against floor 1.27.2"
+            exit 1
+          fi
+          echo "the planted exposure was found, as it must be"
