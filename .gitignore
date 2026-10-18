@@ -1,0 +1,9 @@
+# ⛔ fleettools v0.1.0 TRACKED TWO COMPILED EXECUTABLES, 8.4 MB of them, because
+# there was no .gitignore at all and `git add -A` does not ask. The tag was cut
+# over that tree and cannot be unpublished: proxy.golang.org holds its own copy
+# of the zip and sum.golang.org has the hash in an append-only log. The module
+# had to be retracted. This file exists before the first commit for that reason.
+/modfloor
+/modfloor.exe
+*.test
+*.out
