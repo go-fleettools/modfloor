@@ -7,11 +7,22 @@ Three pins decide three different things, and they move apart:
 
 | | | |
 |---|---|---|
-| `go-version:` in a workflow | builds the artefacts | `gopin --from 1.27.1 --version 1.27.2` |
-| the toolchain recorded **in a binary** | what one installed executable was built with | `modfloor --bins ~/.local/bin --floor 1.27.2` |
-| the **`go` directive** in the published `go.mod` | what a consumer honours under `GOTOOLCHAIN=local` | `modfloor --dir … --floor 1.27.2`, then raise it **and release** |
+| `go-version:` in a workflow | builds the artefacts | `gopin --from 1.27.2 --version 1.27.3` |
+| the toolchain recorded **in a binary** | what one installed executable was built with | `modfloor --bins ~/.local/bin --floor 1.27.3` |
+| the **`go` directive** in the published `go.mod` | what a consumer honours under `GOTOOLCHAIN=local` | `modfloor --dir … --floor 1.27.3`, then raise it **and release** |
 
 Only the third is the exposure, and it is the one no green check looks at.
+
+⛔ **The floor is 1.27.3 since 2026-10-22**, and the reason is the shape this
+tool was built for. `GO-2026-6809` (CVE-2026-111943, *"Distrust compromised
+intermediate certificates in `crypto/x509`"*, published 2026-10-21, fixed in
+go1.26.10 and go1.27.3) was found **reachable** from this very module — the
+trace is `cmd.go:105:12: modfloor.RootCmd calls pflag.FlagSet.BoolVarP, which
+eventually calls x509.Certificate.Verify` — while it declared `go 1.27.2`. Same
+tree, same `govulncheck`, the directive the only variable: `1.27.2` is affected,
+`1.27.3` reports nothing. So "below the floor" and "current until yesterday"
+were the same number for a day, which is why this repository's own lane now
+plants a module exactly **one patch** below rather than an obviously old one.
 
 The case that produced this tool, on a sibling repository: CI pinned
 `go-version: '1.27.2'`, every installed binary was built with go1.27.2, every
@@ -32,10 +43,13 @@ go.mod requires go >= 1.27.2 (running go 1.27.1)
 ## Usage
 
 ```
-modfloor --dir ~/Documents/VCS/GIT/localhost --owners 'go-*' --floor 1.27.2
-modfloor --bins ~/.local/bin --floor 1.27.2
-modfloor --floor 1.27.2 github.com/go-fleettools/fleettools
+modfloor --dir ~/Documents/VCS/GIT/localhost --owners 'go-*' --floor 1.27.3
+modfloor --bins ~/.local/bin --floor 1.27.3
+modfloor --floor 1.27.3 github.com/go-fleettools/fleettools
 ```
+
+A recorded run, kept as it was measured — against the floor that was current
+then (1.27.2), not the one above:
 
 ```
 REPOSITORY                MODULE                               LOCAL   PUBLISHED  @LATEST  VERDICT

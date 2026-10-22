@@ -108,18 +108,25 @@ jobs:
           # --offline: the proxy's copy of THIS branch does not exist yet, so
           # the working tree is the only thing there is to judge. Without it the
           # lane would report "unpublished" on every pull request.
-          /tmp/modfloor --dir . --offline --floor 1.27.2
+          /tmp/modfloor --dir . --offline --floor 1.27.3
       - name: and the exposure it exists to find must still be found
         run: |
           set -eu
           # The planted positive. A guard nobody has seen fire is a guard that
           # may not fire: this builds a module below the floor in a work tree of
           # its own and requires exit status 1.
+          #
+          # ⛔ The planted module is ONE PATCH below the floor, not an obviously
+          # old version. That is the case this lane exists for: on 2026-10-22
+          # go1.27.2 stopped being clean (GO-2026-6809, crypto/x509) and 1.27.3
+          # became the floor, so "below" and "nearly current" were the same
+          # number for a day. A control that only catches 1.27.1 would not have
+          # noticed.
           mkdir -p /tmp/below/.git
           printf '[remote "origin"]\n\turl = https://github.com/go-fleettools/planted.git\n' > /tmp/below/.git/config
-          printf 'module example.com/below\n\ngo 1.27.1\n' > /tmp/below/go.mod
-          if /tmp/modfloor --dir /tmp/below --offline --floor 1.27.2; then
-            echo "::error::modfloor reported a module declaring go 1.27.1 as clean against floor 1.27.2"
+          printf 'module example.com/below\n\ngo 1.27.2\n' > /tmp/below/go.mod
+          if /tmp/modfloor --dir /tmp/below --offline --floor 1.27.3; then
+            echo "::error::modfloor reported a module declaring go 1.27.2 as clean against floor 1.27.3"
             exit 1
           fi
           echo "the planted exposure was found, as it must be"
