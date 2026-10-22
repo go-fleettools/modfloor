@@ -62,7 +62,7 @@ The remedy, and the sibling tools — there are THREE pins and they move apart:
 
   the go directive ...... raise it in a PR, then RELEASE: a consumer reads the
                           published go.mod, not your branch
-  the CI pin ............ gopin --from 1.27.1 --version 1.27.2
+  the CI pin ............ gopin --from 1.27.2 --version 1.27.3
   an installed binary ... reinstall from the tag; staletools says which are old
 
 For the advisories themselves, vulnscan runs govulncheck across the fleet and
