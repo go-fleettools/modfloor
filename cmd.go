@@ -104,6 +104,7 @@ func RootCmd() *cobra.Command {
 	f.BoolVar(&opt.offline, "offline", false, "do not query the proxy; report what the working trees declare")
 	f.BoolVarP(&opt.listOnly, "list", "l", false, "print the module paths found and stop")
 	f.BoolVarP(&opt.verbose, "verbose", "v", false, "name every go.mod set aside, and every disagreement between worktrees")
+	c.AddCommand(pseudoCmd())
 	return c
 }
 
