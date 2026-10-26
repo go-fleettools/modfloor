@@ -119,6 +119,32 @@ directive whose loss turns a module which *fails closed* into a reported
 exposure, so it is recovered from the syntax tree, and a test asserts the
 verdict rather than the mechanism.
 
+## `modfloor pseudo`: dependencies that were never released
+
+```
+modfloor pseudo --dir ~/Documents/VCS/GIT/github.com/go-llmflow/gateway \
+  --fleet-prefix github.com/go-volumes/ --fleet-prefix github.com/go-authn/
+```
+
+```
+MODULE                                     VERSION                             FLEET
+github.com/go-volumes/interface            v0.0.0-20261026102434-e5b421ad6fae  FLEET
+google.golang.org/genproto/googleapis/rpc  v0.0.0-20260928230214-8a89bd6388cc
+2 of 120 modules at a pseudo-version, 1 of them the fleet's
+```
+
+This lists every module of a build graph that is required at a pseudo-version, that is at a commit instead of a tag. It reads `go list -m -json all`, run with `GOWORK=off` in `--dir`, or a saved copy given with `--input`.
+
+A replaced module is judged by what is actually built. Modules matching a `--fleet-prefix` are marked `FLEET`; without any prefix, every module counts as the fleet's.
+
+**Why it matters.** A pseudo-version names a commit that semver says nothing about, and it stays in the module proxy forever. On 2026-10-26, go-llmflow/gateway depended this way on two fleet modules that had never been tagged.
+
+**Exit status.**
+
+- 0: no fleet module is at a pseudo-version. Third-party modules at a pseudo-version are listed but do not fail the check, because their upstream decides whether to tag.
+- 1: at least one fleet module is at a pseudo-version.
+- 2: the graph could not be read. A graph with no dependency also exits 2: it was not measured, so it is not reported clean.
+
 ## Siblings
 
 For the advisories themselves, `vulnscan` runs govulncheck across the fleet and
