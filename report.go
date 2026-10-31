@@ -7,9 +7,39 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"text/tabwriter"
 )
+
+// exposure splits the modules a floor condemned by whether anybody can reach
+// them, and counts the ones already fixed but not released.
+//
+// ⛔ ONE NUMBER OVER BOTH POPULATIONS CANNOT BE PRIORITISED, which is why this
+// exists. A module on the proxy imposes its floor on every consumer that runs
+// `go install`; one that was never published imposes it only on somebody
+// building from a clone. Measured on this fleet on 2026-10-31: 935 of 1025
+// modules were below the floor, and that reads as a thousand-repository
+// emergency until the split says how many a consumer can actually install.
+//
+// "fixed locally, UNRELEASED" is counted apart again, because it is the state
+// where the pull request is merged and the work is NOT finished: the consumer
+// reads the published go.mod, not the branch.
+func exposure(rows []Row) (published, unpublished, fixedUnreleased int) {
+	for _, r := range rows {
+		if r.Verdict.Exposed() {
+			if r.Note == "unpublished" {
+				unpublished++
+			} else {
+				published++
+			}
+		}
+		if strings.Contains(r.Note, "UNRELEASED") {
+			fixedUnreleased++
+		}
+	}
+	return published, unpublished, fixedUnreleased
+}
 
 // A Row is one module's answer: what the working tree declares, what the proxy
 // serves, and the verdict — which is judged on the PUBLISHED floor, because
@@ -232,6 +262,14 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 	fmt.Fprintln(w, head+"\tNOTE")
 
 	tally := map[Verdict]int{}
+	// ⛔ AND THE EXPOSED ONES SPLIT BY WHETHER ANYBODY CAN INSTALL THEM, because
+	// one number over both populations cannot be prioritised. A module on the
+	// proxy imposes its floor on every consumer that runs `go install`; one that
+	// was never published imposes it only on somebody building from a clone.
+	// Measured 2026-10-31: 935 of 1025 of this fleet's modules were below the
+	// floor, which reads as a thousand-repository emergency until the split says
+	// how many a consumer can actually reach.
+	exposedPublished, exposedUnpublished, fixedUnreleased := exposure(rows)
 	for _, r := range rows {
 		pub := dash(r.Published.Go)
 		if o.offline {
@@ -268,6 +306,17 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 	if n := tally[Below] + tally[NoFloor]; n > 0 {
 		fmt.Fprintf(out, "⛔ %d modules declare a floor below %s — a consumer running "+
 			"`go install` with GOTOOLCHAIN=local builds unpatched code.\n", n, o.floor)
+		// Which of them a consumer can actually reach, said separately: the
+		// published ones are the campaign, the rest are housekeeping.
+		if !o.offline {
+			fmt.Fprintf(out, "   of those, %d are PUBLISHED on the proxy (a consumer can install them) "+
+				"and %d were never published (only a local build honours their floor).\n",
+				exposedPublished, exposedUnpublished)
+			if fixedUnreleased > 0 {
+				fmt.Fprintf(out, "   and %d already carry the fix in their working tree but have not been "+
+					"RELEASED, so the pull request is merged and the work is not finished.\n", fixedUnreleased)
+			}
+		}
 	}
 }
 

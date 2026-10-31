@@ -106,6 +106,26 @@ A measurement that found nothing **refuses** rather than reporting a clean
 fleet. Zero exposed modules out of zero modules is the best possible value in
 its column, which is exactly how an unopened measurement reads as perfection.
 
+And the exposure is **split by whether anybody can reach it**, because one
+number over both populations cannot be prioritised: a module on the proxy
+imposes its floor on every consumer that runs `go install`, while one that was
+never published imposes it only on somebody building from a clone. A third line
+counts the modules already fixed in their working tree and **not released**,
+which is the state where the pull request is merged and the work is not
+finished.
+
+```
+939 modules declare a floor below 1.27.3 …
+   of those, 904 are PUBLISHED on the proxy (a consumer can install them)
+   and 35 were never published (only a local build honours their floor).
+   and 3 already carry the fix in their working tree but have not been RELEASED…
+```
+
+⛔ Worth saying plainly: that split was added because it **might** have shrunk
+the campaign, and on this fleet it did not — 904 of 939 are installable. A
+measurement is worth taking when either answer would change what you do, not
+only when it gives the answer you hoped for.
+
 ## Two traps it encodes
 
 **`go/version` accepts `go27.2`.** It reads 27 as the major, so the common typo
