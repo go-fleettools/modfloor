@@ -299,7 +299,12 @@ func TestReportModulesRefusesAnEmptyMeasurement(t *testing.T) {
 func TestAnExposureExitsOneAndACleanTreeExitsZero(t *testing.T) {
 	below := t.TempDir()
 	fakeRepo(t, below, "go-fleettools/below")
-	write(t, filepath.Join(below, "go.mod"), "module example.com/below\n\ngo 1.27.1\n")
+	// ⛔ The module path MATCHES the repository, as a real one does. These
+	// fixtures said `example.com/below` inside `go-fleettools/below`, and once
+	// Repo.Declares existed every one of them exercised "a module another
+	// project publishes" instead of the exposure it was written for — a fake
+	// fixture cannot witness a real module.
+	write(t, filepath.Join(below, "go.mod"), "module github.com/go-fleettools/below\n\ngo 1.27.1\n")
 	code, c, err := reportModules(io.Discard, io.Discard, offlineOpts(below, "1.27.2", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +318,7 @@ func TestAnExposureExitsOneAndACleanTreeExitsZero(t *testing.T) {
 
 	ok := t.TempDir()
 	fakeRepo(t, ok, "go-fleettools/ok")
-	write(t, filepath.Join(ok, "go.mod"), "module example.com/ok\n\ngo 1.27.2\n")
+	write(t, filepath.Join(ok, "go.mod"), "module github.com/go-fleettools/ok\n\ngo 1.27.2\n")
 	code, _, err = reportModules(io.Discard, io.Discard, offlineOpts(ok, "1.27.2", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -338,7 +343,7 @@ func TestAnExposureExitsOneAndACleanTreeExitsZero(t *testing.T) {
 func TestTheCommandKeepsTheThreeOutcomesApart(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, root, "go-fleettools/x")
-	write(t, filepath.Join(root, "go.mod"), "module example.com/x\n\ngo 1.27.1\n")
+	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/x\n\ngo 1.27.1\n")
 
 	if got, _, _ := runCmd(t); got != 2 {
 		t.Errorf("no arguments exited %d, want 2 (nothing to measure)", got)
@@ -358,7 +363,8 @@ func TestTheCommandKeepsTheThreeOutcomesApart(t *testing.T) {
 // is a flag a reader will type and a shell will reject.
 func TestEveryFlagTheHelpNamesIsWiredUp(t *testing.T) {
 	c := RootCmd()
-	for _, name := range []string{"dir", "bins", "floor", "owners", "jobs", "offline", "list", "verbose"} {
+	for _, name := range []string{"dir", "bins", "floor", "owners", "jobs", "offline", "list", "verbose",
+		"baseline", "write-baseline"} {
 		if c.Flags().Lookup(name) == nil {
 			t.Errorf("--%s is named in the help but not registered", name)
 		}
@@ -380,7 +386,7 @@ func TestEveryFlagTheHelpNamesIsWiredUp(t *testing.T) {
 func TestAGoModInNoWorkTreeIsSetAsideRatherThanCounted(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, root, "go-fleettools/real")
-	write(t, filepath.Join(root, "go.mod"), "module example.com/real\n\ngo 1.27.2\n")
+	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/real\n\ngo 1.27.2\n")
 
 	// A module cache entry lives under the tree but in no work tree of its own;
 	// it is only inside this one because the walk started above it. Give it its
@@ -422,9 +428,9 @@ func TestOwnersNarrowsThePopulationAndCountsWhatItDropped(t *testing.T) {
 		}
 	}
 	fakeRepo(t, mine, "go-fleettools/mine")
-	write(t, filepath.Join(mine, "go.mod"), "module example.com/mine\n\ngo 1.27.1\n")
+	write(t, filepath.Join(mine, "go.mod"), "module github.com/go-fleettools/mine\n\ngo 1.27.1\n")
 	fakeRepo(t, theirs, "someone-else/theirs")
-	write(t, filepath.Join(theirs, "go.mod"), "module example.com/theirs\n\ngo 1.20\n")
+	write(t, filepath.Join(theirs, "go.mod"), "module github.com/someone-else/theirs\n\ngo 1.20\n")
 
 	code, c, err := reportModules(io.Discard, io.Discard, offlineOpts(root, "1.27.2", ParseOwners("go-*")))
 	if err != nil {
@@ -522,7 +528,7 @@ func fakeRepo(t *testing.T, root, slug string) {
 
 func TestFindGoModsSkipsTestdataAndVendor(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "go.mod"), "module example.com/real\n\ngo 1.27.2\n")
+	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/real\n\ngo 1.27.2\n")
 	for _, skip := range []string{"testdata", "vendor", ".git"} {
 		d := filepath.Join(root, skip, "inner")
 		if err := os.MkdirAll(d, 0o755); err != nil {

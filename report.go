@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,9 +19,14 @@ import (
 // ⛔ ONE NUMBER OVER BOTH POPULATIONS CANNOT BE PRIORITISED, which is why this
 // exists. A module on the proxy imposes its floor on every consumer that runs
 // `go install`; one that was never published imposes it only on somebody
-// building from a clone. Measured on this fleet on 2026-10-31: 935 of 1025
-// modules were below the floor, and that reads as a thousand-repository
-// emergency until the split says how many a consumer can actually install.
+// building from a clone. Measured on this fleet on 2026-11-01: 262 of 348
+// modules were below the floor, every one of them published.
+//
+// ⛔ The figure first recorded here was "935 of 1025", and it was wrong: the
+// population included 540 modules other projects publish, found inside our own
+// work trees. Repo.Declares now sets those aside. A true count over the wrong
+// population is worse than no count, and it was published on two pages before
+// the tool's own first baseline showed sigs.k8s.io/yaml in it.
 //
 // "fixed locally, UNRELEASED" is counted apart again, because it is the state
 // where the pull request is merged and the work is NOT finished: the consumer
@@ -64,6 +70,7 @@ type Census struct {
 	Unreadable int // files and directories that could not be read
 	OutOfScope int // modules whose owner is not in the declared population
 	NotInRepo  int // modules in no git work tree at all: caches, archives
+	Foreign    int // modules another project publishes, found inside one of ours
 	Modules    int // distinct modules kept
 }
 
@@ -127,6 +134,19 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 				c.OutOfScope++
 				continue
 			}
+			// ⛔ AND THE SECOND HALF OF "CAN WE PUSH A FIX": the work tree
+			// being ours does not make the MODULE ours. tannevaled/pantry
+			// carries other projects' sources, so its go.mod files answered
+			// the owner test and put sigs.k8s.io/yaml and cel.dev/expr into a
+			// baseline of this fleet's exposures.
+			if !repo.Declares(fl.Module) {
+				c.Foreign++
+				if o.verbose {
+					fmt.Fprintf(errOut, "⚠ foreign: %s declares %s, which %s does not publish\n",
+						short(f), fl.Module, repo.Slug())
+				}
+				continue
+			}
 
 			// First clone wins; a second is noted only if it disagrees, since
 			// two worktrees of one repository legitimately differ mid-branch.
@@ -157,9 +177,10 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 			where = "the arguments"
 		}
 		return 2, c, fmt.Errorf("no module of %s found in %s — %d go.mod files were "+
-			"seen and all were set aside (%d out of scope, %d in no work tree). "+
+			"seen and all were set aside (%d out of scope, %d in no work tree, "+
+			"%d published by another project). "+
 			"Nothing was measured, which is not the same as nothing being wrong",
-			o.owners, where, c.GoMods, c.OutOfScope, c.NotInRepo)
+			o.owners, where, c.GoMods, c.OutOfScope, c.NotInRepo, c.Foreign)
 	}
 
 	rows := make([]Row, 0, len(local))
@@ -206,6 +227,34 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 			exposed++
 		}
 	}
+
+	// Recording is not judging: a run that writes the baseline exits 0 even
+	// though it just found hundreds of exposures, because the file it wrote is the
+	// statement of where the campaign starts, not a verdict on it.
+	if o.writeBaseline != "" {
+		f, err := os.Create(o.writeBaseline)
+		if err != nil {
+			return 2, c, err
+		}
+		if err := WriteBaseline(f, rows, o.floor, o.offline); err != nil {
+			f.Close()
+			return 2, c, err
+		}
+		if err := f.Close(); err != nil {
+			return 2, c, err
+		}
+		fmt.Fprintf(out, "wrote %d exposed module(s) to %s at floor %s, mode %s\n",
+			exposed, o.writeBaseline, o.floor, baselineMode(o.offline))
+		return 0, c, nil
+	}
+	if o.baseline != "" {
+		b, err := loadBaseline(o.baseline, o.floor, o.offline)
+		if err != nil {
+			return 2, c, err
+		}
+		return printRatchet(out, b, Compare(b, rows), exposed), c, nil
+	}
+
 	if o.floor != "" && exposed > 0 {
 		return 1, c, nil
 	}
@@ -266,9 +315,9 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 	// one number over both populations cannot be prioritised. A module on the
 	// proxy imposes its floor on every consumer that runs `go install`; one that
 	// was never published imposes it only on somebody building from a clone.
-	// Measured 2026-10-31: 935 of 1025 of this fleet's modules were below the
-	// floor, which reads as a thousand-repository emergency until the split says
-	// how many a consumer can actually reach.
+	// Measured 2026-11-01: 262 of 348 of this fleet's modules were below the
+	// floor, and all 262 published — so here the split says the exposure is as
+	// large as the count, which is an answer and not a reassurance.
 	exposedPublished, exposedUnpublished, fixedUnreleased := exposure(rows)
 	for _, r := range rows {
 		pub := dash(r.Published.Go)
@@ -289,8 +338,9 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 	// a count is only as meaningful as the set it counts over — and the set was
 	// declared on the command line, not guessed.
 	fmt.Fprintf(out, "\npopulation: owners %s — %d go.mod seen, %d kept; set aside: "+
-		"%d out of scope, %d in no work tree, %d without a module directive, %d unreadable\n",
-		o.owners, c.GoMods, c.Modules, c.OutOfScope, c.NotInRepo, c.NoModule, c.Unreadable)
+		"%d out of scope, %d in no work tree, %d published by another project, "+
+		"%d without a module directive, %d unreadable\n",
+		o.owners, c.GoMods, c.Modules, c.OutOfScope, c.NotInRepo, c.Foreign, c.NoModule, c.Unreadable)
 
 	if o.floor == "" {
 		fmt.Fprintf(out, "no floor given, so no verdict. Pass --floor 1.27.2 for one.\n")

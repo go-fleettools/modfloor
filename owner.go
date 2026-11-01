@@ -31,6 +31,32 @@ func (r Repo) Slug() string {
 	return r.Owner + "/" + r.Name
 }
 
+// Declares reports whether this repository is the one that PUBLISHES the given
+// module path — the only case in which raising its floor is something we can do.
+//
+// ⛔⛔ BEING IN OUR WORK TREE DOES NOT MAKE THE MODULE OURS, and the comment
+// above this type said it did. On 2026-11-01 a baseline of this fleet came back
+// holding `sigs.k8s.io/yaml`, `cel.dev/expr` and twenty more, all found inside
+// `tannevaled/pantry` — a repository that carries other projects' sources. Every
+// `remote.origin.url` said tannevaled, so every one passed the owner test, and
+// nobody here can raise the floor of `sigs.k8s.io/yaml`. It is the 532-modules
+// incident this file was written for, arriving through the other door: the first
+// one came from go.mod files in NO repository, this one from foreign go.mod
+// files in OURS.
+//
+// The test is the module path against the repository's own path. A module in a
+// subdirectory (a monorepo) and a /v2 suffix both match by prefix; a vanity
+// host such as `sigs.k8s.io` can never match a forge slug, which is the point.
+// With no remote there is nothing to compare, and the owner globs have already
+// had their say, so it is left alone rather than guessed at.
+func (r Repo) Declares(module string) bool {
+	if r.Host == "" || r.Owner == "" || r.Name == "" {
+		return true
+	}
+	prefix := r.Host + "/" + r.Owner + "/" + r.Name
+	return module == prefix || strings.HasPrefix(module, prefix+"/")
+}
+
 // ErrNoRepo means no .git was found above the given directory: a module cache
 // entry, an unpacked archive, a scratch directory.
 var ErrNoRepo = errors.New("not in a git work tree")

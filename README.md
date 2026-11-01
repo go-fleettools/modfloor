@@ -98,9 +98,21 @@ Every count was true and the population was wrong — nobody here can raise the
 floor of `k8s.io/api`. A module in no git work tree, or under another owner, is
 **set aside and counted**, and the counts are printed next to the answer.
 
-The discriminator is not the module path but `remote.origin.url`: the question
-"is this ours" is really "can we push a fix". A credential in that URL is
-dropped before it can reach the report.
+The discriminator is `remote.origin.url` **and** the module path, because the
+question "is this ours" is really "can we push a fix" and it takes both halves
+to answer. A credential in that URL is dropped before it can reach the report.
+
+⛔ **Being in our work tree does not make the module ours** — the second half,
+learnt on 2026-11-01 from this tool's own first baseline. It came back holding
+`sigs.k8s.io/yaml`, `cel.dev/expr` and twenty more, every one of them found
+inside `tannevaled/pantry`, a repository that carries other projects' sources.
+Each `remote.origin.url` said tannevaled, so each one passed the owner test, and
+nobody here can raise the floor of `sigs.k8s.io/yaml`. It is the 532-modules
+incident above arriving through the other door: that one was go.mod files in *no*
+repository, this one foreign go.mod files in *ours*. A module whose path is not
+the repository's own path — `github.com/<owner>/<name>`, or a subdirectory or
+`/v2` of it — is set aside as `published by another project`, counted on the
+population line, and named by `--verbose`.
 
 A measurement that found nothing **refuses** rather than reporting a clean
 fleet. Zero exposed modules out of zero modules is the best possible value in
@@ -114,17 +126,85 @@ counts the modules already fixed in their working tree and **not released**,
 which is the state where the pull request is merged and the work is not
 finished.
 
+Measured 2026-11-01, with the population printed beside it because a count is
+only as good as the set it counts over:
+
 ```
-939 modules declare a floor below 1.27.3 …
-   of those, 904 are PUBLISHED on the proxy (a consumer can install them)
-   and 35 were never published (only a local build honours their floor).
-   and 3 already carry the fix in their working tree but have not been RELEASED…
+population: owners go-*,tannevaled — 1779 go.mod seen, 348 kept; set aside:
+410 out of scope, 43 in no work tree, 540 published by another project,
+0 without a module directive, 0 unreadable
+348 modules against floor 1.27.3:  ok=86  BELOW=260  no-go=2
+⛔ 262 modules declare a floor below 1.27.3 …
+   of those, 262 are PUBLISHED on the proxy (a consumer can install them)
+   and 0 were never published.
+   and 6 already carry the fix in their working tree but have not been RELEASED…
 ```
 
 ⛔ Worth saying plainly: that split was added because it **might** have shrunk
-the campaign, and on this fleet it did not — 904 of 939 are installable. A
-measurement is worth taking when either answer would change what you do, not
-only when it gives the answer you hoped for.
+the campaign, and it did not — all 262 are installable. A measurement is worth
+taking when either answer would change what you do, not only when it gives the
+answer you hoped for.
+
+⛔⛔ **And the first figure published here was wrong**, which is the more useful
+half of the story. On 2026-10-31 this README, the organisation's landing and the
+documentation all said *904 of 939*. That count was true over a population that
+included **540 modules other projects publish**, sitting inside our own work
+trees — the owner test passed them and nothing asked whether we could push a fix
+to `sigs.k8s.io/yaml`. The real campaign is 262 modules, and the figure that
+found the error was produced by this tool's own first baseline, where a human
+reading 567 lines noticed `cel.dev/expr` among them. The number was published on
+two pages before anyone looked at the list it came from.
+
+## `--baseline`: a gate for a campaign that cannot be finished in one day
+
+⛔ **A report that is red for ever is not a gate.** 262 of this fleet's published
+modules declare a floor below 1.27.3, so `modfloor --floor 1.27.3` exits 1 every
+time it runs and will keep doing so for as long as raising them takes. A lane in
+that state gets read as broken, then ignored — and the day a *new* module lands
+below the floor, nothing changes colour.
+
+So the two questions are separated. "How many are exposed" is a number that
+drains slowly. "Did anything get **worse** since the last look" must stay zero,
+and that one is a gate.
+
+```
+modfloor --dir … --owners 'go-*' --floor 1.27.3 --write-baseline floor.txt
+modfloor --dir … --owners 'go-*' --floor 1.27.3 --baseline floor.txt
+```
+
+The file is plain text, so the diff of a tightened baseline is readable in a pull
+request:
+
+```
+# modfloor baseline — the exposed set at a KNOWN floor …
+floor 1.27.3
+mode published
+taken 2026-11-01
+BELOW	github.com/go-widgets/toolkit
+no-go	example.com/ancient
+```
+
+Three refusals, each one a gate that would otherwise pass for the wrong reason:
+
+| | |
+|---|---|
+| no `floor` line, or **another** floor | every verdict here changes the day the floor moves, and it moved three times in four days (1.27.1 → 1.27.2 → 1.27.3). A baseline is a set of module names, and a set of names says nothing without the floor it was judged against |
+| another `mode` | `--offline` records what the working trees declare, the default records what the proxy serves. Those are different answers about the same modules |
+| `--baseline` **and** `--write-baseline` together | recording the answer and then judging it against itself always passes, which is a gate that cannot fail |
+
+And the distinction a subtraction gets wrong: a module that **left the
+population** — its clone deleted, renamed, moved out of the owner globs, or
+simply not walked — leaves the exposed set exactly as a repaired module does. It
+is reported as `NOT MEASURED THIS TIME (not a fix)` and counted apart, because
+adding the two together is how a campaign declares victory by losing track of
+its subjects.
+
+⚠ **Where this should run is not settled.** The baseline is a statement about one
+machine's clone population, so committing it here would make this repository's
+lane depend on that machine. The per-repository alternative — four lines of CI in
+each repository, `modfloor --dir . --offline --floor X`, which is what the `self`
+lane below already does — is a guarantee at pull-request time and costs one pull
+request per repository.
 
 ## Two traps it encodes
 
