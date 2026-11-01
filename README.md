@@ -187,17 +187,43 @@ modfloor --dir … --owners 'go-*' --floor 1.27.3 --write-baseline floor.txt
 modfloor --dir … --owners 'go-*' --floor 1.27.3 --baseline floor.txt
 ```
 
-The file is plain text, so the diff of a tightened baseline is readable in a pull
-request:
+The file is plain text, so the diff of a re-recorded baseline is readable in a
+pull request. It holds **every module the run measured**, clean ones included:
 
 ```
-# modfloor baseline — the exposed set at a KNOWN floor …
+# modfloor baseline — EVERY module measured, with its verdict …
 floor 1.27.3
 mode published
+records all
 taken 2026-11-01
+ok	github.com/go-fleettools/modfloor
 BELOW	github.com/go-widgets/toolkit
 no-go	example.com/ancient
 ```
+
+⛔⛔ **The clean ones are the point, and the first version left them out.** It
+fired 80 minutes after its own baseline with *"8 module(s) are exposed that the
+baseline did not have"* — every one of them a repository another session had just
+cloned; `go-compressions/xz` appeared on disk one minute before the run, and the
+population had grown from 348 modules to 360. **A clone arriving is not the fleet
+getting worse.** That is the mirror of the `NOT MEASURED THIS TIME` case below,
+and it needed the same treatment.
+
+The silent half is the dangerous one: with only the exposed set recorded, a
+module that *was* `ok` and is exposed now is indistinguishable from one that was
+never measured — so the real regression would have been filed as population
+growth and the gate would have **passed**. A baseline without `records all`
+(anything modfloor ≤ v0.6.1 wrote) is therefore **refused**, not read as best it
+can be.
+
+So the comparison has four outcomes, and only the first fails a run:
+
+| | |
+|---|---|
+| `WORSE` | the baseline measured it and found it **clean**; it is exposed now. **The gate** |
+| `new to the population (not a regression)` | exposed, and the baseline never measured it. Work, but nothing says it was ever clean. ⚠ A repository *created* below the floor arrives this way too, which only a check in its own CI can catch |
+| `fixed` | was exposed, measured again, no longer exposed |
+| `NOT MEASURED THIS TIME (not a fix)` | was exposed and did not appear at all |
 
 Three refusals, each one a gate that would otherwise pass for the wrong reason:
 
@@ -213,6 +239,37 @@ simply not walked — leaves the exposed set exactly as a repaired module does. 
 is reported as `NOT MEASURED THIS TIME (not a fix)` and counted apart, because
 adding the two together is how a campaign declares victory by losing track of
 its subjects.
+
+## The campaign's shape, not only its size
+
+⛔ **`gopin --gomod --from X --version Y` names the version to move exactly** —
+deliberately, because "move anything older" cannot tell a stale pin from a
+deliberate hold, and this fleet has removed a deliberate one as an outlier
+before. So a campaign over modules declaring several floors is **one run per
+floor**, and the report says which:
+
+```
+⛔ 262 modules declare a floor below 1.27.3 …
+   they live in 221 repositories, so the campaign is about 221 pull requests
+   and not 262.
+   they declare 10 different floors, so `gopin --gomod --from X --version
+   1.27.3` is 10 runs and not one:
+      --from 1.27.2     61 module(s)
+      --from 1.27.1     191 module(s)
+      --from 1.27.0     3 module(s)
+      --from 1.27       3 module(s)
+      --from 1.26.4     4 module(s)
+      --from 1.26.0     1 module(s)
+      --from 1.25       1 module(s)
+      --from 1.24       1 module(s)
+      --from 1.21       1 module(s)
+      --from (none)     3 module(s)
+```
+
+Two runs cover 252 of the 262. A module with no directive at all is grouped under
+`(none)`, because `--from` has nothing to match there and it needs a different
+act. The floors are ordered as Go versions and never as text, since 1.9 is below
+1.10 and this list is read by somebody choosing which run to do first.
 
 ⚠ **Where this should run is not settled.** The baseline is a statement about one
 machine's clone population, so committing it here would make this repository's

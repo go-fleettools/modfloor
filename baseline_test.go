@@ -26,16 +26,23 @@ func TestABaselineRecordsTheFloorAndModeItWasTakenAgainst(t *testing.T) {
 	if b.Floor != "1.27.3" || b.Mode != "published" {
 		t.Fatalf("floor %q mode %q", b.Floor, b.Mode)
 	}
-	if len(b.Exposed) != 2 || b.Exposed["example.com/a"] != string(Below) || b.Exposed["example.com/b"] != string(NoFloor) {
-		t.Fatalf("%v", b.Exposed)
+	// ⛔ EVERY measured module is recorded, the clean ones included, and they
+	// are the point: without them a module that WAS ok and is exposed now
+	// cannot be told from one that was never measured.
+	if len(b.Seen) != 4 {
+		t.Fatalf("recorded %d modules, want all 4: %v", len(b.Seen), b.Seen)
+	}
+	if b.ExposedCount() != 2 || !b.Exposed("example.com/a") || !b.Exposed("example.com/b") {
+		t.Fatalf("exposed = %d: %v", b.ExposedCount(), b.Seen)
 	}
 	// `ok` is not an exposure, and neither is `toolchain`: it fails CLOSED
-	// under GOTOOLCHAIN=local rather than building vulnerable code.
-	if _, ok := b.Exposed["example.com/ok"]; ok {
-		t.Error("an ok module is in the baseline")
+	// under GOTOOLCHAIN=local rather than building vulnerable code. Both are
+	// recorded as SEEN and neither counts as exposed.
+	if b.Exposed("example.com/ok") || b.Exposed("example.com/pinned") {
+		t.Error("a clean module was recorded as an exposure")
 	}
-	if _, ok := b.Exposed["example.com/pinned"]; ok {
-		t.Error("a toolchain-pinned module is in the baseline")
+	if _, seen := b.Seen["example.com/pinned"]; !seen {
+		t.Error("a toolchain-pinned module must still be recorded as measured")
 	}
 }
 
@@ -59,15 +66,28 @@ func TestABaselineThatAnswersADifferentQuestionIsRefused(t *testing.T) {
 		}
 	}
 
-	// A baseline with a valid header and no exposures is legitimate: it says
-	// "nothing was exposed", which is different from an unread file. The header
-	// is what witnesses that the file was read at all.
-	b, err := ReadBaseline(strings.NewReader("# a clean fleet\nfloor 1.27.3\nmode offline\ntaken 2026-11-01\n"))
+	// A baseline with a valid header and no rows is legitimate: it says
+	// "nothing was measured as exposed", which is different from an unread
+	// file. The headers are what witness that the file was read at all.
+	b, err := ReadBaseline(strings.NewReader(
+		"# a clean fleet\nfloor 1.27.3\nmode offline\nrecords all\ntaken 2026-11-01\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b.Exposed) != 0 || b.Mode != "offline" {
+	if len(b.Seen) != 0 || b.ExposedCount() != 0 || b.Mode != "offline" {
 		t.Fatalf("%+v", b)
+	}
+
+	// ⛔ And a baseline of the EXPOSED SET ALONE — every file modfloor ≤ v0.6.1
+	// wrote — is refused rather than read as best it can be. It holds no clean
+	// modules, so a real regression would be filed as population growth and
+	// the gate would pass. The dangerous direction is the silent one.
+	old := "floor 1.27.3\nmode published\ntaken 2026-11-01\nBELOW\texample.com/a\n"
+	if _, err := ReadBaseline(strings.NewReader(old)); err == nil {
+		t.Error("an exposed-only baseline was accepted")
+	} else if !strings.Contains(err.Error(), "records all") ||
+		!strings.Contains(err.Error(), "population growth") {
+		t.Errorf("the refusal must say what it cannot tell apart: %v", err)
 	}
 }
 
@@ -101,20 +121,31 @@ func TestAModulePathCannotPlantALineInTheBaseline(t *testing.T) {
 // them together is how a campaign declares victory by losing track of its
 // subjects.
 func TestAModuleThatLeftThePopulationIsNotAFix(t *testing.T) {
-	b := &Baseline{Floor: "1.27.3", Mode: "published", Exposed: map[string]string{
+	b := &Baseline{Floor: "1.27.3", Mode: "published", Seen: map[string]string{
 		"example.com/still":    string(Below),
 		"example.com/fixed":    string(Below),
 		"example.com/vanished": string(Below),
+		// Measured and CLEAN. This is the one that makes a regression
+		// distinguishable from a clone arriving.
+		"example.com/wasclean": string(OK),
 	}}
 	rows := []Row{
 		{Module: "example.com/still", Verdict: Below},
 		{Module: "example.com/fixed", Verdict: OK},
-		{Module: "example.com/new", Verdict: Below},
+		{Module: "example.com/wasclean", Verdict: Below},
+		{Module: "example.com/arrived", Verdict: Below},
 		// example.com/vanished is absent from the run entirely.
 	}
 	rt := Compare(b, rows)
-	if len(rt.Regressed) != 1 || rt.Regressed[0] != "example.com/new" {
-		t.Errorf("regressed = %v, want [example.com/new]", rt.Regressed)
+	// ⛔ Only the module that was MEASURED AND CLEAN counts as worse.
+	if len(rt.Regressed) != 1 || rt.Regressed[0] != "example.com/wasclean" {
+		t.Errorf("regressed = %v, want [example.com/wasclean]", rt.Regressed)
+	}
+	// ⛔ And the one the baseline never looked at is NOT a regression: the
+	// first version of this called eight freshly cloned repositories
+	// regressions 80 minutes after its own baseline.
+	if len(rt.Entered) != 1 || rt.Entered[0] != "example.com/arrived" {
+		t.Errorf("entered = %v, want [example.com/arrived]", rt.Entered)
 	}
 	if len(rt.Fixed) != 1 || rt.Fixed[0] != "example.com/fixed" {
 		t.Errorf("fixed = %v, want [example.com/fixed]", rt.Fixed)
@@ -124,11 +155,45 @@ func TestAModuleThatLeftThePopulationIsNotAFix(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if code := printRatchet(&out, b, rt, 2); code != 1 {
-		t.Errorf("a new exposure must exit 1, got %d", code)
+	if code := printRatchet(&out, b, rt, 3); code != 1 {
+		t.Errorf("a module that was clean and is exposed must exit 1, got %d", code)
 	}
-	if !strings.Contains(out.String(), "NOT MEASURED THIS TIME (not a fix)") {
-		t.Error("the report must not let a disappearance read as a fix:\n" + out.String())
+	for _, want := range []string{
+		"WORSE example.com/wasclean",
+		"new to the population (not a regression) example.com/arrived",
+		"NOT MEASURED THIS TIME (not a fix) example.com/vanished",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the report must keep these apart; missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// ⛔⛔ AND A POPULATION THAT GREW IS NOT A FLEET THAT GOT WORSE. This fired for
+// real on 2026-11-01: eight "regressions" 80 minutes after the baseline, every
+// one a repository another session had just cloned (`go-compressions/xz`
+// appeared on disk one minute before the run), the population growing from 348
+// modules to 360. A gate that cries wolf is a gate nobody reads.
+func TestPopulationGrowthDoesNotFailTheGate(t *testing.T) {
+	b := &Baseline{Floor: "1.27.3", Mode: "published", Taken: "2026-11-01",
+		Seen: map[string]string{"example.com/a": string(Below)}}
+	rows := []Row{
+		{Module: "example.com/a", Verdict: Below},
+		{Module: "example.com/cloned1", Verdict: Below},
+		{Module: "example.com/cloned2", Verdict: NoFloor},
+	}
+	rt := Compare(b, rows)
+	var out strings.Builder
+	if code := printRatchet(&out, b, rt, 3); code != 0 {
+		t.Fatalf("clones arriving must not fail the gate, got %d\n%s", code, out.String())
+	}
+	if len(rt.Entered) != 2 || len(rt.Regressed) != 0 {
+		t.Fatalf("entered=%v regressed=%v", rt.Entered, rt.Regressed)
+	}
+	// It must still be loud: they are work, and the gate says why it cannot
+	// judge them.
+	if !strings.Contains(out.String(), "2 module(s) entered the population exposed") {
+		t.Error("entering exposed must be reported, not swallowed:\n" + out.String())
 	}
 }
 
@@ -136,13 +201,13 @@ func TestAModuleThatLeftThePopulationIsNotAFix(t *testing.T) {
 // is the SAME 262. A lane that is red for ever is read as broken and ignored.
 func TestAnUnchangedExposureIsNotAFailureButIsStillSaid(t *testing.T) {
 	b := &Baseline{Floor: "1.27.3", Mode: "published", Taken: "2026-11-01",
-		Exposed: map[string]string{"example.com/a": string(Below), "example.com/b": string(Below)}}
+		Seen: map[string]string{"example.com/a": string(Below), "example.com/b": string(Below)}}
 	rows := []Row{{Module: "example.com/a", Verdict: Below}, {Module: "example.com/b", Verdict: Below}}
 	var out strings.Builder
 	if code := printRatchet(&out, b, Compare(b, rows), 2); code != 0 {
 		t.Fatalf("an unchanged exposure must be status 0, got %d", code)
 	}
-	if !strings.Contains(out.String(), "2 still exposed, 0 new") {
+	if !strings.Contains(out.String(), "2 still exposed, 0 WORSE") {
 		t.Error("a green ratchet must still print the size of the campaign:\n" + out.String())
 	}
 }
@@ -208,6 +273,10 @@ func TestTheRatchetPassesTheOldExposureAndFiresOnANewOne(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, filepath.Join(root, "old"), "go-fleettools/old")
 	write(t, filepath.Join(root, "old", "go.mod"), "module github.com/go-fleettools/old\n\ngo 1.27.1\n")
+	// Measured and CLEAN at recording time. Without a clean module in the
+	// baseline there is nothing a regression can be told apart from.
+	fakeRepo(t, filepath.Join(root, "clean"), "go-fleettools/clean")
+	write(t, filepath.Join(root, "clean", "go.mod"), "module github.com/go-fleettools/clean\n\ngo 1.27.3\n")
 	path := filepath.Join(t.TempDir(), "floor.txt")
 
 	// Recording finds an exposure and still exits 0: it states where the
@@ -228,20 +297,35 @@ func TestTheRatchetPassesTheOldExposureAndFiresOnANewOne(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("an unchanged exposure must exit 0, got %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "1 still exposed, 0 new") {
+	if !strings.Contains(out, "1 still exposed, 0 WORSE") {
 		t.Fatal(out)
 	}
 
-	// ⛔ The planted regression. A guard nobody has seen fire is a guard that
-	// may not fire.
-	fakeRepo(t, filepath.Join(root, "new"), "go-fleettools/new")
-	write(t, filepath.Join(root, "new", "go.mod"), "module github.com/go-fleettools/new\n\ngo 1.27.2\n")
+	// ⛔ A CLONE ARRIVING EXPOSED MUST NOT FAIL THE GATE — the mistake this
+	// command made for real, eight times, 80 minutes after its own baseline.
+	fakeRepo(t, filepath.Join(root, "arrived"), "go-fleettools/arrived")
+	write(t, filepath.Join(root, "arrived", "go.mod"), "module github.com/go-fleettools/arrived\n\ngo 1.27.2\n")
+	code, out, _ = runCmd(t, "--dir", root, "--owners", "go-fleettools", "--offline",
+		"--floor", "1.27.3", "--baseline", path)
+	if code != 0 {
+		t.Fatalf("a module the baseline never measured is not a regression, got %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "new to the population (not a regression) github.com/go-fleettools/arrived") ||
+		!strings.Contains(out, "1 module(s) entered the population exposed") {
+		t.Fatal(out)
+	}
+
+	// ⛔ THE PLANTED REGRESSION: a module the baseline measured and found CLEAN,
+	// pushed below the floor. A guard nobody has seen fire is a guard that may
+	// not fire.
+	write(t, filepath.Join(root, "clean", "go.mod"), "module github.com/go-fleettools/clean\n\ngo 1.27.1\n")
 	code, out, _ = runCmd(t, "--dir", root, "--owners", "go-fleettools", "--offline",
 		"--floor", "1.27.3", "--baseline", path)
 	if code != 1 {
-		t.Fatalf("a module the baseline does not have must exit 1, got %d\n%s", code, out)
+		t.Fatalf("a module that was clean and is exposed must exit 1, got %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "NEW  github.com/go-fleettools/new") || !strings.Contains(out, "2 still exposed, 1 new") {
+	if !strings.Contains(out, "WORSE github.com/go-fleettools/clean") ||
+		!strings.Contains(out, "3 still exposed, 1 WORSE, 1 new to the population") {
 		t.Fatal(out)
 	}
 
