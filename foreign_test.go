@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,11 +55,7 @@ func TestTheWalkSetsAsideAForeignModuleAndCountsIt(t *testing.T) {
 	// Two other projects' sources, carried inside it. Both below the floor,
 	// and neither of them ours to raise.
 	for dir, module := range map[string]string{"yaml": "sigs.k8s.io/yaml", "expr": "cel.dev/expr"} {
-		d := filepath.Join(root, "pantry", "srcs", dir)
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		write(t, filepath.Join(d, "go.mod"), "module "+module+"\n\ngo 1.22\n")
+		write(t, filepath.Join(root, "pantry", "srcs", dir, "go.mod"), "module "+module+"\n\ngo 1.22\n")
 	}
 
 	var out, errOut strings.Builder

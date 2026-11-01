@@ -31,6 +31,33 @@ import (
 // "fixed locally, UNRELEASED" is counted apart again, because it is the state
 // where the pull request is merged and the work is NOT finished: the consumer
 // reads the published go.mod, not the branch.
+// ⛔ A CAMPAIGN IS COSTED IN PULL REQUESTS, NOT IN FINDINGS. 262 exposed modules
+// reads as 262 pieces of work, and it is not: several modules of one repository
+// are raised by ONE pull request, because the `go` directive they share lives in
+// go.mod files that land together. Measured on a sibling campaign, 896 stale
+// pins were 123 pull requests — a factor of seven. A count nobody can turn into
+// an amount of work cannot be scheduled, and an estimate seven times too large
+// is an estimate that gets the campaign refused.
+//
+// A module named as a positional argument has no work tree, so there is no
+// repository to credit it to: those are counted apart rather than folded into
+// the estimate, since a module we did not find on disk is one we may not be
+// able to push to at all.
+func campaign(rows []Row) (repos, unplaced int) {
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if !r.Verdict.Exposed() {
+			continue
+		}
+		if slug := r.Repo.Slug(); slug != "" {
+			seen[slug] = true
+		} else {
+			unplaced++
+		}
+	}
+	return len(seen), unplaced
+}
+
 func exposure(rows []Row) (published, unpublished, fixedUnreleased int) {
 	for _, r := range rows {
 		if r.Verdict.Exposed() {
@@ -356,6 +383,15 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 	if n := tally[Below] + tally[NoFloor]; n > 0 {
 		fmt.Fprintf(out, "⛔ %d modules declare a floor below %s — a consumer running "+
 			"`go install` with GOTOOLCHAIN=local builds unpatched code.\n", n, o.floor)
+		// The size of the WORK, not of the finding: several modules of one
+		// repository are raised by one pull request.
+		repos, unplaced := campaign(rows)
+		fmt.Fprintf(out, "   they live in %d repositories, so the campaign is about %d pull "+
+			"requests and not %d", repos, repos, n)
+		if unplaced > 0 {
+			fmt.Fprintf(out, ", plus %d module(s) found in no work tree", unplaced)
+		}
+		fmt.Fprintln(out, ".")
 		// Which of them a consumer can actually reach, said separately: the
 		// published ones are the campaign, the rest are housekeeping.
 		if !o.offline {

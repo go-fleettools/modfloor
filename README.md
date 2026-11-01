@@ -135,10 +135,25 @@ population: owners go-*,tannevaled — 1779 go.mod seen, 348 kept; set aside:
 0 without a module directive, 0 unreadable
 348 modules against floor 1.27.3:  ok=86  BELOW=260  no-go=2
 ⛔ 262 modules declare a floor below 1.27.3 …
+   they live in 221 repositories, so the campaign is about 221 pull requests
+   and not 262.
    of those, 262 are PUBLISHED on the proxy (a consumer can install them)
    and 0 were never published.
    and 6 already carry the fix in their working tree but have not been RELEASED…
 ```
+
+⛔ **A campaign is costed in pull requests, not in findings.** 262 exposed modules
+reads as 262 pieces of work and it is not: several modules of one repository are
+raised by one pull request, because the directives they declare land together. On
+a sibling campaign 896 stale pins turned out to be 123 pull requests — a factor
+of seven — and an estimate seven times too large is an estimate that gets the
+campaign refused.
+
+Here the factor is **1.19**: 262 modules in 221 repositories. Said plainly,
+because it is the second measurement in this README that did not give the answer
+it was taken for. The grouping that saved a sibling campaign seven eighths of its
+work saves this one nothing much, and 221 pull requests is the real number to
+decide about.
 
 ⛔ Worth saying plainly: that split was added because it **might** have shrunk
 the campaign, and it did not — all 262 are installable. A measurement is worth
