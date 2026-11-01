@@ -635,8 +635,15 @@ func TestEscapePathAppliesTheProxyCaseEncoding(t *testing.T) {
 	}
 }
 
+// write plants a file, creating its parent directories: a fixture for this tool
+// is often a go.mod in a SUBDIRECTORY of a repository (a monorepo module, a
+// vendored tree), and a helper that could not make one turned three tests into
+// "no such file or directory" instead of the measurement they were written for.
 func write(t *testing.T, path, body string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
