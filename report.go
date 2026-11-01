@@ -403,6 +403,15 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 					"RELEASED, so the pull request is merged and the work is not finished.\n", fixedUnreleased)
 			}
 		}
+		// ⛔ AND THE SHAPE OF THE WORK, not only its size: `gopin --gomod
+		// --from X` names the version to move EXACTLY, so a campaign over
+		// modules declaring several floors is one run per floor.
+		keys, count := byDirective(rows, o.offline)
+		fmt.Fprintf(out, "   they declare %d different floors, so `gopin --gomod --from X "+
+			"--version %s` is %d runs and not one:\n", len(keys), o.floor, len(keys))
+		for _, k := range keys {
+			fmt.Fprintf(out, "      --from %-10s %d module(s)\n", k, count[k])
+		}
 	}
 }
 

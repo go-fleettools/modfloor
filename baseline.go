@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"go/version"
 	"io"
 	"os"
 	"sort"
@@ -31,10 +32,92 @@ import (
 //	BELOW   github.com/go-widgets/toolkit
 //	no-go   example.com/ancient
 type Baseline struct {
-	Floor   string            // the floor this baseline was taken against
-	Mode    string            // "published" or "offline": which go.mod was judged
-	Taken   string            // the date, informational
-	Exposed map[string]string // module path -> the verdict recorded for it
+	Floor string // the floor this baseline was taken against
+	Mode  string // "published" or "offline": which go.mod was judged
+	Taken string // the date, informational
+	// Seen is EVERY module the recording run measured, with its verdict —
+	// not only the exposed ones.
+	//
+	// ⛔ THE FIRST VERSION RECORDED ONLY THE EXPOSED SET, AND THAT CANNOT
+	// ANSWER THE QUESTION. It fired 80 minutes after its own baseline with
+	// "8 module(s) are exposed that the baseline did not have", every one of
+	// them a repository another session had just cloned — `go-compressions/xz`
+	// appeared on disk one minute before the run. The population had grown
+	// from 348 modules to 360, and growth was being reported as regression.
+	//
+	// The mirror of that mistake is the dangerous one: a module that was `ok`
+	// in the baseline and is exposed now is indistinguishable, in an
+	// exposed-only file, from a module that was never measured — so the real
+	// regression would have been filed as "new to the population" and the gate
+	// would have passed. Hence every measured module is recorded.
+	Seen map[string]string
+}
+
+// Exposed reports whether the baseline had this module condemned.
+func (b *Baseline) Exposed(module string) bool {
+	return Verdict(b.Seen[module]).Exposed()
+}
+
+// ExposedCount is how large the campaign was when the baseline was taken.
+func (b *Baseline) ExposedCount() int {
+	n := 0
+	for _, v := range b.Seen {
+		if Verdict(v).Exposed() {
+			n++
+		}
+	}
+	return n
+}
+
+// byDirective groups the exposed modules by the floor they actually declare,
+// newest first.
+//
+// ⛔ THE CAMPAIGN IS NOT ONE RUN OF ONE TOOL. The fleet raises a directive with
+// `gopin --gomod --from X --version Y`, and gopin names the version to move
+// EXACTLY — deliberately, because "move anything older" cannot tell a stale pin
+// from a deliberate hold, and this fleet has removed a deliberate one as an
+// outlier before. So a campaign over modules declaring eleven different floors
+// is eleven runs, each with its own stated `--from`, and "221 pull requests" is
+// the cost of the work while this is the SHAPE of it. One number cannot be
+// scheduled; a list of `--from` values with a size each can.
+//
+// A module with no directive at all is grouped under "(none)": `--from` has
+// nothing to match there, so those need a different act.
+func byDirective(rows []Row, offline bool) ([]string, map[string]int) {
+	count := map[string]int{}
+	for _, r := range rows {
+		if !r.Verdict.Exposed() {
+			continue
+		}
+		// The floor that was JUDGED is the one a campaign has to name, and for
+		// a published module that is the published one, not the working tree's.
+		declared := r.Published.Go
+		if offline || r.Note == "unpublished" {
+			declared = r.Local.Go
+		}
+		if declared == "" {
+			declared = "(none)"
+		}
+		count[declared]++
+	}
+	keys := make([]string, 0, len(count))
+	for k := range count {
+		keys = append(keys, k)
+	}
+	// Newest first, so the largest `--from` values — the ones a security
+	// release makes urgent — are read first. "(none)" sorts last.
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a == "(none)" || b == "(none)" {
+			return b == "(none)"
+		}
+		// Compared as Go versions, never as text: 1.9 is below 1.10.
+		if c := version.Compare(goVersion(a), goVersion(b)); c != 0 {
+			return c > 0
+		}
+		return a < b
+	})
+	return keys, count
 }
 
 // baselineMode names the go.mod a run judges, which is half of what makes a
@@ -47,14 +130,10 @@ func baselineMode(offline bool) string {
 	return "published"
 }
 
-// WriteBaseline records the exposed set of one run.
+// WriteBaseline records every module one run measured, with its verdict.
 func WriteBaseline(w io.Writer, rows []Row, floor string, offline bool) error {
 	exposed := make([]Row, 0, len(rows))
-	for _, r := range rows {
-		if r.Verdict.Exposed() {
-			exposed = append(exposed, r)
-		}
-	}
+	exposed = append(exposed, rows...)
 	sort.Slice(exposed, func(i, j int) bool { return exposed[i].Module < exposed[j].Module })
 
 	// ⛔ A MODULE PATH THAT CARRIES THE FILE'S OWN SEPARATORS COULD WIDEN THE
@@ -71,11 +150,15 @@ func WriteBaseline(w io.Writer, rows []Row, floor string, offline bool) error {
 	}
 
 	b := &strings.Builder{}
-	fmt.Fprintln(b, "# modfloor baseline — the exposed set at a KNOWN floor, so that a later")
-	fmt.Fprintln(b, "# run can answer \"did anything get worse\" instead of \"how many are there\".")
-	fmt.Fprintln(b, "# Tighten it when modules are fixed; never widen it to make a lane green.")
+	fmt.Fprintln(b, "# modfloor baseline — EVERY module measured, with its verdict, at a KNOWN")
+	fmt.Fprintln(b, "# floor, so that a later run can answer \"did anything get worse\" instead of")
+	fmt.Fprintln(b, "# \"how many are there\". The clean ones are here too, and they are the point:")
+	fmt.Fprintln(b, "# without them, a module that WAS ok and is exposed now cannot be told from a")
+	fmt.Fprintln(b, "# module that was never measured, and the regression passes as population growth.")
+	fmt.Fprintln(b, "# Re-record it when modules are fixed; never edit it to make a lane green.")
 	fmt.Fprintf(b, "floor %s\n", floor)
 	fmt.Fprintf(b, "mode %s\n", baselineMode(offline))
+	fmt.Fprintf(b, "records all\n")
 	fmt.Fprintf(b, "taken %s\n", time.Now().UTC().Format("2006-01-02"))
 	for _, r := range exposed {
 		fmt.Fprintf(b, "%s\t%s\n", r.Verdict, r.Module)
@@ -92,7 +175,8 @@ func WriteBaseline(w io.Writer, rows []Row, floor string, offline bool) error {
 // moved three times in four days (1.27.1 → 1.27.2 → 1.27.3). A nameless
 // baseline would silently keep passing a gate whose question had changed.
 func ReadBaseline(r io.Reader) (*Baseline, error) {
-	b := &Baseline{Exposed: map[string]string{}}
+	b := &Baseline{Seen: map[string]string{}}
+	records := ""
 	sc := bufio.NewScanner(r)
 	for n := 1; sc.Scan(); n++ {
 		// ⛔ Spaces and a stray carriage return are trimmed, NOT the tab: the
@@ -108,7 +192,7 @@ func ReadBaseline(r io.Reader) (*Baseline, error) {
 			if module == "" {
 				return nil, fmt.Errorf("line %d: a verdict with no module path", n)
 			}
-			b.Exposed[module] = strings.TrimSpace(verdict)
+			b.Seen[module] = strings.TrimSpace(verdict)
 			continue
 		}
 		key, value, ok := strings.Cut(line, " ")
@@ -120,6 +204,8 @@ func ReadBaseline(r io.Reader) (*Baseline, error) {
 			b.Floor = value
 		case "mode":
 			b.Mode = value
+		case "records":
+			records = value
 		case "taken":
 			b.Taken = value
 		default:
@@ -140,13 +226,41 @@ func ReadBaseline(r io.Reader) (*Baseline, error) {
 	if b.Mode != "published" && b.Mode != "offline" {
 		return nil, fmt.Errorf("mode %q: expected `published` or `offline`", b.Mode)
 	}
+	// ⛔ A BASELINE OF THE EXPOSED SET ALONE IS REFUSED, not read as best it
+	// can be. Those files (modfloor ≤ v0.6.1) hold no clean modules, so a
+	// module that WAS ok and is exposed now cannot be told from one that was
+	// never measured — and reading it anyway would file the real regression
+	// under "new to the population" and let the gate pass. The dangerous
+	// direction is the silent one, so this fails closed.
+	if records != "all" {
+		return nil, fmt.Errorf("this baseline records only the exposed set (no `records all` line): "+
+			"it cannot tell a module that WAS clean from one that was never measured, so a real "+
+			"regression would pass as population growth. Re-record it with "+
+			"--write-baseline --floor %s", b.Floor)
+	}
 	return b, nil
 }
 
 // A Ratchet is the comparison of one run against a baseline.
 type Ratchet struct {
-	// Regressed are exposed modules the baseline did not have: the gate.
+	// Regressed are modules the baseline MEASURED AND FOUND CLEAN and that are
+	// exposed now. This is the gate, and it is the only one of these four that
+	// fails a run.
 	Regressed []string
+	// Entered are exposed modules the baseline never measured at all.
+	//
+	// ⛔ THESE ARE NOT REGRESSIONS, and the first version of this reported them
+	// as such. It fired 80 minutes after its own baseline with "8 module(s) are
+	// exposed that the baseline did not have" — every one a repository another
+	// session had just cloned, `go-compressions/xz` appearing on disk one
+	// minute before the run, the population growing from 348 modules to 360.
+	// A clone arriving is not the fleet getting worse.
+	//
+	// It is the mirror of Gone, and it needed the same treatment: a subject
+	// that entered the population and a subject that got worse are different
+	// facts, and a gate that cannot tell them apart cries wolf until somebody
+	// stops reading it.
+	Entered []string
 	// Fixed were in the baseline, were measured again, and are no longer
 	// exposed. Real progress, and the reason to tighten the file.
 	Fixed []string
@@ -169,14 +283,24 @@ func Compare(b *Baseline, rows []Row) Ratchet {
 	exposed := make(map[string]bool, len(rows))
 	for _, r := range rows {
 		measured[r.Module] = true
-		if r.Verdict.Exposed() {
-			exposed[r.Module] = true
-			if _, known := b.Exposed[r.Module]; !known {
-				rt.Regressed = append(rt.Regressed, r.Module)
-			}
+		if !r.Verdict.Exposed() {
+			continue
+		}
+		exposed[r.Module] = true
+		switch _, seen := b.Seen[r.Module]; {
+		case !seen:
+			// The baseline never looked at this module, so it cannot say the
+			// module got worse. New work, not a regression.
+			rt.Entered = append(rt.Entered, r.Module)
+		case !b.Exposed(r.Module):
+			// Measured, found clean, exposed now: the thing the gate is for.
+			rt.Regressed = append(rt.Regressed, r.Module)
 		}
 	}
-	for m := range b.Exposed {
+	for m := range b.Seen {
+		if !b.Exposed(m) {
+			continue
+		}
 		switch {
 		case !measured[m]:
 			rt.Gone = append(rt.Gone, m)
@@ -185,6 +309,7 @@ func Compare(b *Baseline, rows []Row) Ratchet {
 		}
 	}
 	sort.Strings(rt.Regressed)
+	sort.Strings(rt.Entered)
 	sort.Strings(rt.Fixed)
 	sort.Strings(rt.Gone)
 	return rt
@@ -195,24 +320,37 @@ func Compare(b *Baseline, rows []Row) Ratchet {
 // clean — the line says how many are still exposed, so that a green lane cannot
 // be mistaken for an empty campaign.
 func printRatchet(out io.Writer, b *Baseline, rt Ratchet, stillExposed int) int {
-	fmt.Fprintf(out, "\nratchet against a baseline of %d exposed module(s), floor %s, mode %s, taken %s:\n",
-		len(b.Exposed), b.Floor, b.Mode, b.Taken)
+	fmt.Fprintf(out, "\nratchet against a baseline of %d module(s) measured, %d exposed; "+
+		"floor %s, mode %s, taken %s:\n",
+		len(b.Seen), b.ExposedCount(), b.Floor, b.Mode, b.Taken)
 	if len(rt.Regressed) > 0 {
-		fmt.Fprintf(out, "⛔ %d module(s) are exposed that the baseline did not have:\n", len(rt.Regressed))
+		fmt.Fprintf(out, "⛔ %d module(s) the baseline measured and found CLEAN are exposed now:\n",
+			len(rt.Regressed))
 		for _, m := range rt.Regressed {
-			fmt.Fprintln(out, "   NEW ", m)
+			fmt.Fprintln(out, "   WORSE", m)
 		}
+	}
+	// Said apart from the regressions, and never failing the run: a clone
+	// arriving is not the fleet getting worse.
+	for _, m := range rt.Entered {
+		fmt.Fprintln(out, "   new to the population (not a regression)", m)
 	}
 	for _, m := range rt.Fixed {
 		fmt.Fprintln(out, "   fixed", m)
 	}
-	// Said separately, and never added to the fixed ones: a module that left the
-	// population was not repaired, it stopped being looked at.
+	// Said apart from the fixed ones: a module that left the population was not
+	// repaired, it stopped being looked at.
 	for _, m := range rt.Gone {
 		fmt.Fprintln(out, "   NOT MEASURED THIS TIME (not a fix)", m)
 	}
-	fmt.Fprintf(out, "%d still exposed, %d new, %d fixed, %d no longer measured\n",
-		stillExposed, len(rt.Regressed), len(rt.Fixed), len(rt.Gone))
+	fmt.Fprintf(out, "%d still exposed, %d WORSE, %d new to the population, %d fixed, %d no longer measured\n",
+		stillExposed, len(rt.Regressed), len(rt.Entered), len(rt.Fixed), len(rt.Gone))
+	if len(rt.Entered) > 0 {
+		fmt.Fprintf(out, "   ⚠ %d module(s) entered the population exposed. They are work, and they are not "+
+			"a regression this gate can judge — nothing says whether they were ever clean. A repository "+
+			"created below the floor arrives this way too, which only a check in its own CI can catch.\n",
+			len(rt.Entered))
+	}
 	if len(rt.Regressed) > 0 {
 		return 1
 	}
