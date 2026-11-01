@@ -271,6 +271,22 @@ Two runs cover 252 of the 262. A module with no directive at all is grouped unde
 act. The floors are ordered as Go versions and never as text, since 1.9 is below
 1.10 and this list is read by somebody choosing which run to do first.
 
+And `--repos` prints the other half, which is `gopin --list`'s input:
+
+```
+modfloor --dir … --owners 'go-*' --floor 1.27.3 \
+         --declares 1.27.1 --repos > repos-1.27.1.txt
+gopin --from 1.27.1 --version 1.27.3 --gomod --list repos-1.27.1.txt
+```
+
+One `owner/name` per line, deduplicated — several modules of one repository are
+one entry, or `gopin` edits it twice and opens two pull requests for one change —
+sorted, so the file is stable between runs, and printed with **no table above
+it**, because the output is meant to be redirected into a file another tool
+reads. ⛔ A `--declares` that matches nothing is an **error naming the floors
+that do occur**, never an empty list and exit 0: an empty list is not an empty
+campaign, and printing nothing would read as "done".
+
 ⚠ **Where this should run is not settled.** The baseline is a statement about one
 machine's clone population, so committing it here would make this repository's
 lane depend on that machine. The per-repository alternative — four lines of CI in

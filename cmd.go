@@ -19,6 +19,8 @@ type options struct {
 	verbose       bool
 	baseline      string   // judge this run against a recorded exposed set
 	writeBaseline string   // record this run's exposed set and judge nothing
+	repos         bool     // print the repositories of the exposed modules and stop
+	declares      string   // restrict those to the modules declaring exactly this floor
 	modules       []string // module paths named as positional arguments
 }
 
@@ -133,6 +135,10 @@ func RootCmd() *cobra.Command {
 		"is exposed that the file does not have. The gate for a campaign that cannot be finished in one day")
 	f.StringVar(&opt.writeBaseline, "write-baseline", "", "record this run's exposed set to a file and judge "+
 		"nothing (exit 0 even with exposures)")
+	f.BoolVar(&opt.repos, "repos", false, "print one owner/name per line for the repositories of the exposed "+
+		"modules, and stop: this is `gopin --list`'s input")
+	f.StringVar(&opt.declares, "declares", "", "with --repos, only the modules declaring EXACTLY this floor, "+
+		"which is the one value `gopin --from` takes")
 	c.AddCommand(pseudoCmd())
 	return c
 }
