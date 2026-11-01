@@ -358,7 +358,8 @@ func TestTheCommandKeepsTheThreeOutcomesApart(t *testing.T) {
 // is a flag a reader will type and a shell will reject.
 func TestEveryFlagTheHelpNamesIsWiredUp(t *testing.T) {
 	c := RootCmd()
-	for _, name := range []string{"dir", "bins", "floor", "owners", "jobs", "offline", "list", "verbose"} {
+	for _, name := range []string{"dir", "bins", "floor", "owners", "jobs", "offline", "list", "verbose",
+		"baseline", "write-baseline"} {
 		if c.Flags().Lookup(name) == nil {
 			t.Errorf("--%s is named in the help but not registered", name)
 		}

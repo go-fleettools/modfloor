@@ -9,15 +9,17 @@ import (
 // options are what the flags decide. They are gathered in one value so that a
 // test can drive the measurement directly as well as through the command.
 type options struct {
-	dir      string
-	bins     string
-	floor    string
-	owners   Owners
-	jobs     int
-	offline  bool
-	listOnly bool
-	verbose  bool
-	modules  []string // module paths named as positional arguments
+	dir           string
+	bins          string
+	floor         string
+	owners        Owners
+	jobs          int
+	offline       bool
+	listOnly      bool
+	verbose       bool
+	baseline      string   // judge this run against a recorded exposed set
+	writeBaseline string   // record this run's exposed set and judge nothing
+	modules       []string // module paths named as positional arguments
 }
 
 // An exitError carries the status a run should end with, keeping the three
@@ -70,7 +72,23 @@ vulngate judges one run. This tool runs nothing and needs no credential: it
 reads the contract.
 
 Exit status: 0 clean, 1 at least one module exposed, 2 the measurement could
-not be made.`
+not be made.
+
+A campaign cannot use that status. 904 of this fleet's published modules declare
+a floor below 1.27.3, so the lane is red for as long as raising them takes, and a
+lane that is always red is read as broken and then ignored. --baseline answers
+the other question — did anything get WORSE since the last look — and exits 1
+only for a module the recorded set does not have:
+
+  modfloor --dir … --owners 'go-*' --floor 1.27.3 --write-baseline floor.txt
+  modfloor --dir … --owners 'go-*' --floor 1.27.3 --baseline floor.txt
+
+The file names the floor and the mode it was taken against, and a baseline that
+answers a different question is REFUSED rather than silently believed: every
+verdict here changes the day the floor moves, and it moved three times in four
+days. A module that left the population is reported apart from a module that was
+fixed, because a vanished subject looks like a repaired one to anything that
+only subtracts two sets.`
 
 // RootCmd builds the command. Tests drive it with SetArgs, SetOut and SetErr.
 func RootCmd() *cobra.Command {
@@ -104,6 +122,10 @@ func RootCmd() *cobra.Command {
 	f.BoolVar(&opt.offline, "offline", false, "do not query the proxy; report what the working trees declare")
 	f.BoolVarP(&opt.listOnly, "list", "l", false, "print the module paths found and stop")
 	f.BoolVarP(&opt.verbose, "verbose", "v", false, "name every go.mod set aside, and every disagreement between worktrees")
+	f.StringVar(&opt.baseline, "baseline", "", "judge against a recorded exposed set: exit 1 only when a module "+
+		"is exposed that the file does not have. The gate for a campaign that cannot be finished in one day")
+	f.StringVar(&opt.writeBaseline, "write-baseline", "", "record this run's exposed set to a file and judge "+
+		"nothing (exit 0 even with exposures)")
 	c.AddCommand(pseudoCmd())
 	return c
 }
@@ -118,6 +140,9 @@ func run(cmd *cobra.Command, opt options) error {
 		if err := ValidateFloor(opt.floor); err != nil {
 			return &exitError{2, err}
 		}
+	}
+	if err := checkBaseline(opt); err != nil {
+		return &exitError{2, err}
 	}
 
 	status := 0

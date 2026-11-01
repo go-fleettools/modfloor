@@ -126,6 +126,57 @@ the campaign, and on this fleet it did not — 904 of 939 are installable. A
 measurement is worth taking when either answer would change what you do, not
 only when it gives the answer you hoped for.
 
+## `--baseline`: a gate for a campaign that cannot be finished in one day
+
+⛔ **A report that is red for ever is not a gate.** 904 of this fleet's published
+modules declare a floor below 1.27.3, so `modfloor --floor 1.27.3` exits 1 every
+time it runs and will keep doing so for as long as raising them takes. A lane in
+that state gets read as broken, then ignored — and the day a *new* module lands
+below the floor, nothing changes colour.
+
+So the two questions are separated. "How many are exposed" is a number that
+drains slowly. "Did anything get **worse** since the last look" must stay zero,
+and that one is a gate.
+
+```
+modfloor --dir … --owners 'go-*' --floor 1.27.3 --write-baseline floor.txt
+modfloor --dir … --owners 'go-*' --floor 1.27.3 --baseline floor.txt
+```
+
+The file is plain text, so the diff of a tightened baseline is readable in a pull
+request:
+
+```
+# modfloor baseline — the exposed set at a KNOWN floor …
+floor 1.27.3
+mode published
+taken 2026-11-01
+BELOW	github.com/go-widgets/toolkit
+no-go	example.com/ancient
+```
+
+Three refusals, each one a gate that would otherwise pass for the wrong reason:
+
+| | |
+|---|---|
+| no `floor` line, or **another** floor | every verdict here changes the day the floor moves, and it moved three times in four days (1.27.1 → 1.27.2 → 1.27.3). A baseline is a set of module names, and a set of names says nothing without the floor it was judged against |
+| another `mode` | `--offline` records what the working trees declare, the default records what the proxy serves. Those are different answers about the same modules |
+| `--baseline` **and** `--write-baseline` together | recording the answer and then judging it against itself always passes, which is a gate that cannot fail |
+
+And the distinction a subtraction gets wrong: a module that **left the
+population** — its clone deleted, renamed, moved out of the owner globs, or
+simply not walked — leaves the exposed set exactly as a repaired module does. It
+is reported as `NOT MEASURED THIS TIME (not a fix)` and counted apart, because
+adding the two together is how a campaign declares victory by losing track of
+its subjects.
+
+⚠ **Where this should run is not settled.** The baseline is a statement about one
+machine's clone population, so committing it here would make this repository's
+lane depend on that machine. The per-repository alternative — four lines of CI in
+each repository, `modfloor --dir . --offline --floor X`, which is what the `self`
+lane below already does — is a guarantee at pull-request time and costs one pull
+request per repository.
+
 ## Two traps it encodes
 
 **`go/version` accepts `go27.2`.** It reads 27 as the major, so the common typo

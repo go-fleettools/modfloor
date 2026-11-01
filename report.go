@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -206,6 +207,34 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 			exposed++
 		}
 	}
+
+	// Recording is not judging: a run that writes the baseline exits 0 even
+	// though it just found 904 exposures, because the file it wrote is the
+	// statement of where the campaign starts, not a verdict on it.
+	if o.writeBaseline != "" {
+		f, err := os.Create(o.writeBaseline)
+		if err != nil {
+			return 2, c, err
+		}
+		if err := WriteBaseline(f, rows, o.floor, o.offline); err != nil {
+			f.Close()
+			return 2, c, err
+		}
+		if err := f.Close(); err != nil {
+			return 2, c, err
+		}
+		fmt.Fprintf(out, "wrote %d exposed module(s) to %s at floor %s, mode %s\n",
+			exposed, o.writeBaseline, o.floor, baselineMode(o.offline))
+		return 0, c, nil
+	}
+	if o.baseline != "" {
+		b, err := loadBaseline(o.baseline, o.floor, o.offline)
+		if err != nil {
+			return 2, c, err
+		}
+		return printRatchet(out, b, Compare(b, rows), exposed), c, nil
+	}
+
 	if o.floor != "" && exposed > 0 {
 		return 1, c, nil
 	}
