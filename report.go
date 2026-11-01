@@ -246,6 +246,34 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 		}
 	}
 
+	// The repositories, for `gopin --list`. Printed INSTEAD of the table, and
+	// before it, because the answer is meant to be redirected into a file that
+	// another tool reads: a table above it would be in that file too.
+	if o.repos {
+		n, err := reposOf(out, rows, o.declares, o.offline)
+		if err != nil {
+			return 2, c, err
+		}
+		if n == 0 {
+			// ⛔ An empty list is not an empty campaign: it is a `--declares`
+			// that matches nothing, and printing nothing would read as "done".
+			// Name the floors that DO occur, the way a tool should when it
+			// refuses an unknown value.
+			keys, count := byDirective(rows, o.offline)
+			var have []string
+			for _, k := range keys {
+				have = append(have, fmt.Sprintf("%s (%d)", k, count[k]))
+			}
+			if len(have) == 0 {
+				return 2, c, fmt.Errorf("no module of this population is exposed at floor %s, so there is "+
+					"no repository to act on", o.floor)
+			}
+			return 2, c, fmt.Errorf("no exposed module declares %q; the floors that occur are: %s",
+				o.declares, strings.Join(have, ", "))
+		}
+		return 0, c, nil
+	}
+
 	printModules(out, rows, o, c)
 
 	exposed := 0

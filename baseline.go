@@ -120,6 +120,57 @@ func byDirective(rows []Row, offline bool) ([]string, map[string]int) {
 	return keys, count
 }
 
+// reposOf prints one `owner/name` per line for the repositories of the exposed
+// modules, which is exactly what `gopin --list` reads.
+//
+// ⛔ IT EXISTS SO THAT NOBODY RETYPES 191 SLUGS. The campaign runs through
+// `gopin --from X --version Y --gomod --list FILE`, and the list is the join
+// between the measurement and the act. A hand-written one goes stale between
+// the measurement and the run, and this fleet has already had a hand-kept list
+// of repositories be both incomplete and out of date.
+//
+// `declares` is a single floor and not a range, because `gopin --from` takes a
+// single floor: anything looser would hand the campaign a list its tool refuses
+// to act on, one repository at a time, after the budget is spent.
+func reposOf(out io.Writer, rows []Row, declares string, offline bool) (int, error) {
+	seen := map[string]bool{}
+	var slugs []string
+	for _, r := range rows {
+		if !r.Verdict.Exposed() {
+			continue
+		}
+		if declares != "" {
+			got := r.Published.Go
+			if offline || r.Note == "unpublished" {
+				got = r.Local.Go
+			}
+			if got == "" {
+				got = "(none)"
+			}
+			if got != declares {
+				continue
+			}
+		}
+		slug := r.Repo.Slug()
+		if slug == "" || seen[slug] {
+			// A module found in no work tree has no repository to push to, and
+			// several modules of one repository are one entry: gopin would
+			// otherwise edit the same repository twice and open two pull
+			// requests for one change.
+			continue
+		}
+		seen[slug] = true
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	for _, s := range slugs {
+		if _, err := fmt.Fprintln(out, s); err != nil {
+			return 0, err
+		}
+	}
+	return len(slugs), nil
+}
+
 // baselineMode names the go.mod a run judges, which is half of what makes a
 // baseline comparable: the published floor and the working tree's floor are two
 // different populations of answers about the same modules.
