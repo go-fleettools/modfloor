@@ -3,9 +3,10 @@ package main
 import "testing"
 
 // ⛔ The split exists because one number over both populations cannot be
-// prioritised: 935 of 1025 modules below the floor reads as a
-// thousand-repository emergency until somebody says how many a consumer can
-// actually install.
+// prioritised: hundreds of modules below the floor reads as an emergency until
+// somebody says how many a consumer can actually install. (The figure first
+// written here, 935 of 1025, counted 540 modules other projects publish; see
+// Repo.Declares.)
 //
 // Both halves, and the middle: a published exposure must be counted as the
 // campaign, an unpublished one as housekeeping, and an `ok` module as neither.

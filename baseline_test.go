@@ -132,8 +132,8 @@ func TestAModuleThatLeftThePopulationIsNotAFix(t *testing.T) {
 	}
 }
 
-// The gate's whole point: 904 modules still exposed is status 0, as long as it
-// is the SAME 904. A lane that is red for ever is read as broken and ignored.
+// The gate's whole point: 262 modules still exposed is status 0, as long as it
+// is the SAME 262. A lane that is red for ever is read as broken and ignored.
 func TestAnUnchangedExposureIsNotAFailureButIsStillSaid(t *testing.T) {
 	b := &Baseline{Floor: "1.27.3", Mode: "published", Taken: "2026-11-01",
 		Exposed: map[string]string{"example.com/a": string(Below), "example.com/b": string(Below)}}
@@ -207,7 +207,7 @@ func TestTheFlagCombinationsAGateCannotAnswerAreRefused(t *testing.T) {
 func TestTheRatchetPassesTheOldExposureAndFiresOnANewOne(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, filepath.Join(root, "old"), "go-fleettools/old")
-	write(t, filepath.Join(root, "old", "go.mod"), "module example.com/old\n\ngo 1.27.1\n")
+	write(t, filepath.Join(root, "old", "go.mod"), "module github.com/go-fleettools/old\n\ngo 1.27.1\n")
 	path := filepath.Join(t.TempDir(), "floor.txt")
 
 	// Recording finds an exposure and still exits 0: it states where the
@@ -235,13 +235,13 @@ func TestTheRatchetPassesTheOldExposureAndFiresOnANewOne(t *testing.T) {
 	// ⛔ The planted regression. A guard nobody has seen fire is a guard that
 	// may not fire.
 	fakeRepo(t, filepath.Join(root, "new"), "go-fleettools/new")
-	write(t, filepath.Join(root, "new", "go.mod"), "module example.com/new\n\ngo 1.27.2\n")
+	write(t, filepath.Join(root, "new", "go.mod"), "module github.com/go-fleettools/new\n\ngo 1.27.2\n")
 	code, out, _ = runCmd(t, "--dir", root, "--owners", "go-fleettools", "--offline",
 		"--floor", "1.27.3", "--baseline", path)
 	if code != 1 {
 		t.Fatalf("a module the baseline does not have must exit 1, got %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "NEW  example.com/new") || !strings.Contains(out, "2 still exposed, 1 new") {
+	if !strings.Contains(out, "NEW  github.com/go-fleettools/new") || !strings.Contains(out, "2 still exposed, 1 new") {
 		t.Fatal(out)
 	}
 

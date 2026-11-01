@@ -74,7 +74,7 @@ reads the contract.
 Exit status: 0 clean, 1 at least one module exposed, 2 the measurement could
 not be made.
 
-A campaign cannot use that status. 904 of this fleet's published modules declare
+A campaign cannot use that status. 262 of this fleet's published modules declare
 a floor below 1.27.3, so the lane is red for as long as raising them takes, and a
 lane that is always red is read as broken and then ignored. --baseline answers
 the other question — did anything get WORSE since the last look — and exits 1

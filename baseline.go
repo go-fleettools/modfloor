@@ -10,11 +10,12 @@ import (
 	"time"
 )
 
-// ⛔ A REPORT THAT IS RED FOR EVER IS NOT A GATE. On this fleet 904 published
-// modules declare a floor below 1.27.3, so `modfloor --floor 1.27.3` exits 1
-// every time it runs and will keep doing so for as long as the campaign to
-// raise them takes. A lane in that state is read as broken, then ignored, and
-// the day a NEW module lands below the floor nothing changes colour.
+// ⛔ A REPORT THAT IS RED FOR EVER IS NOT A GATE. On 2026-11-01 this fleet had
+// 262 published modules declaring a floor below 1.27.3, so
+// `modfloor --floor 1.27.3` exits 1 every time it runs and will keep doing so
+// for as long as the campaign to raise them takes. A lane in that state is read
+// as broken, then ignored, and the day a NEW module lands below the floor
+// nothing changes colour.
 //
 // A baseline separates the two questions a campaign actually has: "how many are
 // exposed" (a number that drains slowly) and "did anything get WORSE since the
