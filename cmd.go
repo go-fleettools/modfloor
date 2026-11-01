@@ -67,6 +67,13 @@ The remedy, and the sibling tools — there are THREE pins and they move apart:
   the CI pin ............ gopin --from 1.27.2 --version 1.27.3
   an installed binary ... reinstall from the tag; staletools says which are old
 
+gofloor is the nearest neighbour and answers the other side of the same gap: it
+reads the DEFAULT BRANCH through the REST API, with every setup-go step and
+every govulncheck step, and says whether CI would notice a vulnerable
+toolchain. This one reads the PUBLISHED go.mod, which is the copy a consumer
+honours — so "fixed locally, UNRELEASED" is exactly a repository gofloor calls
+clean and a consumer still builds unpatched. Run both.
+
 For the advisories themselves, vulnscan runs govulncheck across the fleet and
 vulngate judges one run. This tool runs nothing and needs no credential: it
 reads the contract.

@@ -262,6 +262,23 @@ A replaced module is judged by what is actually built. Modules matching a `--fle
 
 ## Siblings
 
+⛔ **`gofloor` is the nearest neighbour, and this section did not name it** —
+found on 2026-11-01 by reading `go-fleettools/fleettools`' own command list
+rather than by anything noticing. The two read the same directive and are not
+the same tool:
+
+| | `modfloor` | `gofloor` |
+|---|---|---|
+| which copy of `go.mod` | the **published** one, from `proxy.golang.org` | the **default branch**, through the REST API |
+| what else it reads | installed binaries' build info; a build graph's pseudo-versions | every `setup-go` step; every `govulncheck` step, and whether it can **fail** on a finding |
+| population | local clones, `--owners` globs, judged by `remote.origin.url` **and** the module path | the organisations named as arguments |
+| API budget | **none**, and no credential | one tree call plus one contents call per file |
+| the question | what contract a consumer honours | whether CI would notice a vulnerable toolchain |
+
+The gap between those two columns is this tool's whole subject: `fixed locally,
+UNRELEASED` is precisely a repository `gofloor` calls clean and a consumer still
+builds unpatched. Run both.
+
 For the advisories themselves, `vulnscan` runs govulncheck across the fleet and
 `vulngate` judges one run; `gopin` moves the CI pin; `staletools` says which
 installed binaries are behind. This tool runs nothing: it reads the contract.
