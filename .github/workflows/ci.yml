@@ -72,12 +72,16 @@ jobs:
       # judged by one version, and a lane that silently resolved another
       # answered a different question.
       #
-      # ⛔ vulngate IS PINNED, and to v0.20.1 rather than @latest. A gate judged
-      # by a tool two minors behind is the defect the gate exists to catch --
-      # found on 2026-10-18 in two sibling lanes still pinning v0.18.1 while the
-      # proxy served v0.20.1. @latest would fix that by never being pinned, and
-      # would also make this lane's verdict depend on a release nobody here
-      # reviewed.
+      # ⛔ vulngate IS PINNED rather than @latest. A gate judged by a tool two
+      # minors behind is the defect the gate exists to catch -- found on
+      # 2026-10-18 in two sibling lanes still pinning v0.18.1 while the proxy
+      # served v0.20.1. @latest would fix that by never being pinned, and would
+      # also make this lane's verdict depend on a release nobody here reviewed.
+      #
+      # ⛔ This comment named v0.20.1 while the line below pinned v0.72.0, which
+      # Renovate had moved. A comment that contradicts the code two lines under
+      # it teaches the wrong number to whoever reads it first, so the version
+      # lives in ONE place now: the `go install` line.
       - name: govulncheck, judged by vulngate
         run: |
           set -eu
@@ -85,7 +89,13 @@ jobs:
           go install github.com/go-fleettools/fleettools/cmd/vulngate@v0.72.0
           "$(go env GOPATH)/bin/govulncheck" -format json ./... > /tmp/vuln.json || true
           test -s /tmp/vuln.json || { echo "::error::govulncheck wrote nothing at all"; exit 1; }
-          "$(go env GOPATH)/bin/vulngate" -go "$(go env GOVERSION)" /tmp/vuln.json
+          # ⛔ TWO DASHES for OUR command. vulngate went to cobra in fleettools
+          # v0.53.0 and this lane pins v0.72.0, so `-go` only still works
+          # through the compatibility shim -- which warns on every run and
+          # announces its own removal. A warning inside a green SECURITY lane is
+          # a warning nobody reads. (`govulncheck -format` above is x/vuln's own
+          # `flag` spelling and is left alone: the rule is about our commands.)
+          "$(go env GOPATH)/bin/vulngate" --go "$(go env GOVERSION)" /tmp/vuln.json
 
   # ⛔ The tool measures the floor of OTHER modules; this lane points it at
   # itself. A capability nothing invokes is documented, not deployed -- and a
