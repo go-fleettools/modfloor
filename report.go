@@ -263,9 +263,19 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 			judged = r.Local
 		}
 		r.Verdict = Judge(judged, o.floor)
-		if r.Unconfirmed {
-			// An absence nobody could confirm is not a floor. It is a read
-			// that failed, and it must not be judged as if it had succeeded.
+		if !o.offline && floorUnknown(*r) {
+			// ⛔ A PUBLISHED FLOOR THAT COULD NOT BE READ IS NOT A FLOOR OF
+			// NOTHING. Without this, Published stays blank, Judge reads the
+			// blank as `no-go`, and `no-go` is Exposed — so a proxy that
+			// answered nothing at all produced a full campaign.
+			//
+			// Measured 2026-11-15 and the reason this is here: a sweep of
+			// 1229 modules in which EVERY read failed with "no route to host"
+			// reported "1229 modules declare a floor below 1.27.4 … of those,
+			// 1229 are PUBLISHED on the proxy (a consumer can install them) …
+			// 1091 pull requests", and exited 1. Coherent, plausible, and
+			// false in every figure. The proxy answered 200 for the first
+			// module on that list two minutes later.
 			r.Verdict = Unreadable
 			continue
 		}
@@ -286,17 +296,15 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 		}
 	}
 
-	// ⛔ NOTHING IS DERIVED FROM A MEASUREMENT THAT COULD NOT READ — not a
-	// table, not a baseline, not a `--repos` list. This is the same refusal as
-	// the empty-population one above: a row whose absence could not be
-	// confirmed would land in the housekeeping half of the exposure split,
-	// which is precisely the downward reclassification #17 is about.
-	if names := unconfirmedModules(rows); len(names) > 0 {
-		return 2, c, fmt.Errorf("the proxy answered 404/410 for %d module(s) and the serial "+
-			"re-read could not confirm it, so their published floor is UNKNOWN and this run "+
-			"measured nothing about them: %s. An unconfirmed absence must not be reported as "+
-			"\"never published\", which is the half of the exposure split nobody acts on",
-			len(names), strings.Join(names, ", "))
+	// ⛔ NOTHING ANOTHER TOOL CONSUMES IS DERIVED FROM A FLOOR NOBODY READ.
+	// A `--repos` list feeds `gopin`, a baseline becomes the campaign's
+	// statement of record, and both would carry the gap onward with no note
+	// attached to it. The plain table is printed anyway — its NOTE column is
+	// the diagnosis — and the refusal comes after it.
+	if o.repos || o.writeBaseline != "" || o.baseline != "" {
+		if err := unreadErr(rows, o); err != nil {
+			return 2, c, err
+		}
 	}
 
 	// The repositories, for `gopin --list`. Printed INSTEAD of the table, and
@@ -328,6 +336,14 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 	}
 
 	printModules(out, rows, o, c)
+
+	// The table has been printed, so the per-row notes are in front of the
+	// reader; now the run says it did not measure them, and exits 2 rather
+	// than 1. "Found a problem" and "could not look" must not be the same
+	// status, and here they would have been the same SENTENCE.
+	if err := unreadErr(rows, o); err != nil {
+		return 2, c, err
+	}
 
 	exposed := 0
 	for _, r := range rows {
@@ -369,13 +385,24 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 	return 0, c, nil
 }
 
-// unconfirmedModules names the modules whose absence could not be confirmed,
+// floorUnknown reports whether this row's PUBLISHED floor was never read: the
+// proxy failed, or denied the module once and then could not confirm it.
+//
+// It is one predicate on purpose. The two causes read differently in the note
+// and identically in the verdict, and separating them is how one of them ends
+// up judged: this tool judges the published floor, so no published floor is no
+// verdict, whatever the reason.
+func floorUnknown(r Row) bool {
+	return r.Unconfirmed || (!r.Unpublished && !r.ProxyRead)
+}
+
+// unreadModules names the modules whose published floor was never read,
 // capped: the message has to fit on a terminal, and the count is the finding.
-func unconfirmedModules(rows []Row) []string {
+func unreadModules(rows []Row) []string {
 	var names []string
 	extra := 0
 	for _, r := range rows {
-		if !r.Unconfirmed {
+		if !floorUnknown(r) {
 			continue
 		}
 		if len(names) < 10 {
@@ -388,6 +415,37 @@ func unconfirmedModules(rows []Row) []string {
 		names = append(names, fmt.Sprintf("and %d more", extra))
 	}
 	return names
+}
+
+// unreadErr is the refusal both call sites share: the number of modules whose
+// published floor was never read, and what that makes of the run.
+func unreadErr(rows []Row, o options) error {
+	if o.offline || o.floor == "" {
+		// Offline judges the WORKING TREE and reads no proxy, so there is no
+		// published floor to be missing. With no floor there is no verdict to
+		// be wrong about.
+		return nil
+	}
+	names := unreadModules(rows)
+	if len(names) == 0 {
+		return nil
+	}
+	return fmt.Errorf("the published floor of %d of %d module(s) was never read, so no verdict "+
+		"was reached for them and the counts above are about the rest: %s. ⛔ Without this "+
+		"refusal a blank published floor reads as `no-go`, `no-go` is an exposure, and a proxy "+
+		"that answered NOTHING produces a complete campaign — measured on 2026-11-15, when every "+
+		"read of a 1229-module sweep failed and the report named 1091 pull requests",
+		len(unreadRows(rows)), len(rows), strings.Join(names, ", "))
+}
+
+func unreadRows(rows []Row) []Row {
+	var out []Row
+	for _, r := range rows {
+		if floorUnknown(r) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // confirmPause is how long the confirmation pass waits before its first

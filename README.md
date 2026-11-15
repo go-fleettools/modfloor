@@ -128,6 +128,27 @@ counts the modules already fixed in their working tree and **not released**,
 which is the state where the pull request is merged and the work is not
 finished.
 
+⛔⛔ **A published floor that was never read is not a floor of nothing.** This
+is the costliest shape the tool had, and it was measured rather than argued: on
+2026-11-15 a sweep of 1229 modules in which **every** proxy read failed with
+`no route to host` printed
+
+```
+1229 modules against floor 1.27.4:  no-go=1229
+⛔ 1229 modules declare a floor below 1.27.4 …
+   they live in 1091 repositories, so the campaign is about 1091 pull requests
+   of those, 1229 are PUBLISHED on the proxy (a consumer can install them)
+```
+
+and exited **1**. Not one byte had been read, and the proxy answered 200 for the
+first module on that list two minutes later. `Published` stayed blank, `Judge`
+read the blank as `no-go`, and `no-go` is an exposure — so total silence became
+a complete, costed, plausible campaign. Such a row is now `unreadable` and
+counted apart, the run exits **2** *after* printing the table (the `NOTE` column
+is the diagnosis), and nothing another tool consumes — `--repos`,
+`--write-baseline`, `--baseline` — is written at all, because a gap that travels
+into `gopin` or into a baseline arrives with no note attached to it.
+
 ⛔ **And an "unpublished" answer is confirmed before it is believed**, because
 that split is the one a wrong answer hides behind. A fleet-scale sweep of 855
 modules labelled *published, exposed* modules `unpublished` — moving them from

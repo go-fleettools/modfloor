@@ -80,6 +80,16 @@ For the advisories themselves, vulnscan runs govulncheck across the fleet and
 vulngate judges one run. This tool runs nothing and needs no credential: it
 reads the contract.
 
+A published floor that was never READ is not a floor of nothing. Without that
+rule a blank published floor reads as "no-go", "no-go" is an exposure, and a
+proxy that answered nothing at all produces a complete campaign: measured on
+2026-11-15, a sweep in which every read failed reported "1229 modules declare a
+floor below 1.27.4 … they live in 1091 repositories … of those, 1229 are
+PUBLISHED on the proxy", and exited 1. Such a row is now "unreadable", counted
+apart, and the run exits 2 — after printing the table, whose NOTE column says
+what failed. Nothing another tool consumes (--repos, --write-baseline,
+--baseline) is written at all.
+
 An "unpublished" answer is CONFIRMED before it is believed. A module the proxy
 denies is read a second time, serially, after a pause — because one 404 under a
 sweep of hundreds is a rumour, and a wrong one moves a real exposure into the

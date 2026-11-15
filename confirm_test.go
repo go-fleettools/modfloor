@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -269,10 +270,116 @@ func TestAnUnconfirmedRowStopsTheWholeRunRatherThanBeingCounted(t *testing.T) {
 	if err == nil {
 		t.Fatal("the run reported success")
 	}
-	for _, want := range []string{"github.com/go-fleettools/a", "UNKNOWN"} {
+	for _, want := range []string{"github.com/go-fleettools/a", "never read"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q", err, want)
 		}
+	}
+}
+
+// ⛔⛔ THE LARGER HALF, AND IT WAS MEASURED RATHER THAN IMAGINED. A sweep of
+// 1229 modules on 2026-11-15 in which EVERY proxy read failed with "no route
+// to host" reported:
+//
+//	1229 modules against floor 1.27.4:  no-go=1229
+//	⛔ 1229 modules declare a floor below 1.27.4 …
+//	   they live in 1091 repositories, so the campaign is about 1091 pull requests
+//	   of those, 1229 are PUBLISHED on the proxy (a consumer can install them)
+//
+// and exited 1. Not one byte had been read, and the proxy answered 200 for the
+// first module on that list two minutes later. Published stayed blank, Judge
+// read the blank as `no-go`, and `no-go` is an exposure: a complete campaign
+// out of total silence, which is the costliest shape this fleet knows — a
+// coherent, plausible, false story that nothing flags.
+func TestAProxyThatAnswersNothingProducesNoCampaign(t *testing.T) {
+	d := newProxyDouble(t)
+	d.failWith["github.com/go-fleettools/a"] = http.StatusServiceUnavailable
+
+	swap(t, &sweepProxy, d.proxy)
+	swap(t, &confirmPause, 0)
+
+	root := t.TempDir()
+	fakeRepo(t, root, "go-fleettools/a")
+	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/a\n\ngo 1.27.1\n")
+
+	opt := offlineOpts(root, "1.27.4", nil)
+	opt.offline = false
+	var out strings.Builder
+	code, _, err := reportModules(&out, io.Discard, opt)
+
+	if code != 2 {
+		t.Errorf("exit = %d, want 2: the published floor was never read, so this is "+
+			"\"could not look\" and not \"found a problem\"", code)
+	}
+	if err == nil {
+		t.Fatal("a run that read nothing reported a verdict")
+	}
+	// ⛔ AND IT MUST NOT HAVE COSTED A CAMPAIGN. The sentence naming pull
+	// requests is the one a human acts on, so its absence is the assertion.
+	if strings.Contains(out.String(), "pull request") {
+		t.Errorf("the report costed a campaign out of a floor it never read:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "PUBLISHED on the proxy") {
+		t.Errorf("the report called an unread module installable:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), string(Unreadable)) {
+		t.Errorf("the row is not marked unreadable:\n%s", out.String())
+	}
+}
+
+// --offline reads no proxy at all, so there is no published floor to be
+// missing: the refusal above must not fire and turn the offline mode — which
+// judges working trees on purpose — into a tool that always exits 2.
+func TestOfflineIsNotRefusedForAFloorItNeverMeantToRead(t *testing.T) {
+	root := t.TempDir()
+	fakeRepo(t, root, "go-fleettools/a")
+	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/a\n\ngo 1.27.1\n")
+
+	code, _, err := reportModules(io.Discard, io.Discard, offlineOpts(root, "1.27.4", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 1 {
+		t.Errorf("offline exit = %d, want 1 (an exposure in the working tree)", code)
+	}
+}
+
+// A `--repos` list feeds gopin and a baseline becomes the campaign's record,
+// so neither may be written from a floor nobody read: the gap would travel
+// into another tool with no note attached to it.
+func TestNoListOrBaselineIsWrittenFromAFloorNobodyRead(t *testing.T) {
+	d := newProxyDouble(t)
+	d.failWith["github.com/go-fleettools/a"] = http.StatusServiceUnavailable
+
+	swap(t, &sweepProxy, d.proxy)
+	swap(t, &confirmPause, 0)
+
+	root := t.TempDir()
+	fakeRepo(t, root, "go-fleettools/a")
+	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/a\n\ngo 1.27.1\n")
+
+	base := filepath.Join(t.TempDir(), "floor.txt")
+	for _, tc := range []struct {
+		name string
+		set  func(*options)
+	}{
+		{"--repos", func(o *options) { o.repos = true }},
+		{"--write-baseline", func(o *options) { o.writeBaseline = base }},
+	} {
+		opt := offlineOpts(root, "1.27.4", nil)
+		opt.offline = false
+		tc.set(&opt)
+		var out strings.Builder
+		code, _, err := reportModules(&out, io.Discard, opt)
+		if code != 2 || err == nil {
+			t.Errorf("%s: exit = %d, err = %v; want 2 and a refusal", tc.name, code, err)
+		}
+		if out.Len() != 0 {
+			t.Errorf("%s wrote %q from a floor it never read", tc.name, out.String())
+		}
+	}
+	if _, err := os.Stat(base); err == nil {
+		t.Error("--write-baseline recorded a campaign from a floor nobody read")
 	}
 }
 
@@ -283,14 +390,14 @@ func TestTheUnconfirmedListIsCappedAndSaysHowManyItHid(t *testing.T) {
 	for i := 0; i < 14; i++ {
 		rows = append(rows, Row{Module: fmt.Sprintf("example.com/m%d", i), Unconfirmed: true})
 	}
-	got := unconfirmedModules(rows)
+	got := unreadModules(rows)
 	if len(got) != 11 {
 		t.Fatalf("named %d entries, want 10 modules plus one summary: %v", len(got), got)
 	}
 	if got[10] != "and 4 more" {
 		t.Errorf("last entry = %q, want \"and 4 more\"", got[10])
 	}
-	if n := len(unconfirmedModules([]Row{{Module: "a"}})); n != 0 {
-		t.Errorf("a confirmed row was named as unconfirmed (%d entries)", n)
+	if n := len(unreadModules([]Row{{Module: "a", ProxyRead: true}})); n != 0 {
+		t.Errorf("a row that WAS read was named as unread (%d entries)", n)
 	}
 }
