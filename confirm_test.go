@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -19,6 +20,12 @@ import (
 // always answers the same thing cannot witness either the defect or its fix.
 type proxyDouble struct {
 	srv *httptest.Server
+	// ⛔ THE DOUBLE IS SERVED FROM ONE GOROUTINE PER CONNECTION, so every map
+	// below is shared mutable state. Without this lock `go test -race` reports
+	// a data race in the INSTRUMENT — which CI did, at 76d75f5, while the
+	// local suite ran without -race and passed. The thing under test here is
+	// concurrency; a double that is not safe under it cannot measure it.
+	mu sync.Mutex
 	// denyFirst[module] reads left to deny before answering truthfully.
 	denyFirst map[string]int
 	// status is what a denial answers with: 404 by default, 410 for a module
@@ -51,6 +58,8 @@ func (d *proxyDouble) proxy() *Proxy {
 }
 
 func (d *proxyDouble) serve(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	switch {
 	case strings.HasSuffix(path, "/@latest"):
