@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
+	"time"
 )
 
 // exposure splits the modules a floor condemned by whether anybody can reach
@@ -61,13 +63,13 @@ func campaign(rows []Row) (repos, unplaced int) {
 func exposure(rows []Row) (published, unpublished, fixedUnreleased int) {
 	for _, r := range rows {
 		if r.Verdict.Exposed() {
-			if r.Note == "unpublished" {
+			if r.Unpublished {
 				unpublished++
 			} else {
 				published++
 			}
 		}
-		if strings.Contains(r.Note, "UNRELEASED") {
+		if r.Unreleased {
 			fixedUnreleased++
 		}
 	}
@@ -85,7 +87,31 @@ type Row struct {
 	Published Floors // from the proxy's copy of @latest
 	Latest    string // the version @latest resolved to
 	Verdict   Verdict
-	Note      string
+
+	// ⛔ THE CLASSIFICATION IS A FIELD, NOT THE NOTE'S TEXT. Four separate
+	// rules used to discriminate on `Note == "unpublished"` — the exposure
+	// split, the floor that gets judged, `byDirective`, `reposOf` — and a
+	// fifth on `strings.Contains(Note, "UNRELEASED")`. So adding a word to a
+	// note silently changed five verdicts, which is how #17's fix would have
+	// introduced its own defect: the moment the note became "unpublished
+	// (404)" every one of those rules stopped matching and the row moved from
+	// housekeeping into the campaign for a reason nobody wrote down. The note
+	// is prose for a human; these booleans are what the code asks.
+
+	// Unpublished: the proxy CONFIRMED, on a second serial read, that nothing
+	// is published. One 404 under a sweep does not set it.
+	Unpublished bool
+	// Unconfirmed: a first read answered 404/410 and the re-read could neither
+	// confirm nor contradict it. Such a row is UNREADABLE, never clean.
+	Unconfirmed bool
+	// ProxyRead: the proxy answered and its go.mod parsed, so Published is a
+	// measurement and not a blank left by a failure.
+	ProxyRead bool
+	// Unreleased: the working tree carries the fix and the published module
+	// does not.
+	Unreleased bool
+
+	Note string
 }
 
 // A Census is what the walk found and what it set aside, kept apart from the
@@ -233,17 +259,44 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 			continue
 		}
 		judged := r.Published
-		if o.offline || r.Note == "unpublished" {
+		if o.offline || r.Unpublished {
 			judged = r.Local
 		}
 		r.Verdict = Judge(judged, o.floor)
+		if r.Unconfirmed {
+			// An absence nobody could confirm is not a floor. It is a read
+			// that failed, and it must not be judged as if it had succeeded.
+			r.Verdict = Unreadable
+			continue
+		}
 		// A fix that exists locally but is not released yet is a different
 		// state from a fix nobody has written, and it is the state a
 		// remediation campaign needs to see.
-		if r.Verdict.Exposed() && !o.offline && r.Note == "" &&
+		//
+		// The guard is `ProxyRead`, not an empty note: it asks whether
+		// Published is a measurement. A proxy failure leaves Published blank,
+		// which Judge reads as `no-go` and would therefore label "fixed
+		// locally" on the strength of a read that never happened — while a
+		// module whose PUBLISHED go.mod genuinely carries no `go` directive is
+		// a real instance of this state and must keep the label.
+		if r.Verdict.Exposed() && !o.offline && r.ProxyRead &&
 			r.Local.Go != "" && !Judge(r.Local, o.floor).Exposed() {
+			r.Unreleased = true
 			r.Note = "fixed locally, UNRELEASED"
 		}
+	}
+
+	// ⛔ NOTHING IS DERIVED FROM A MEASUREMENT THAT COULD NOT READ — not a
+	// table, not a baseline, not a `--repos` list. This is the same refusal as
+	// the empty-population one above: a row whose absence could not be
+	// confirmed would land in the housekeeping half of the exposure split,
+	// which is precisely the downward reclassification #17 is about.
+	if names := unconfirmedModules(rows); len(names) > 0 {
+		return 2, c, fmt.Errorf("the proxy answered 404/410 for %d module(s) and the serial "+
+			"re-read could not confirm it, so their published floor is UNKNOWN and this run "+
+			"measured nothing about them: %s. An unconfirmed absence must not be reported as "+
+			"\"never published\", which is the half of the exposure split nobody acts on",
+			len(names), strings.Join(names, ", "))
 	}
 
 	// The repositories, for `gopin --list`. Printed INSTEAD of the table, and
@@ -316,45 +369,165 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 	return 0, c, nil
 }
 
+// unconfirmedModules names the modules whose absence could not be confirmed,
+// capped: the message has to fit on a terminal, and the count is the finding.
+func unconfirmedModules(rows []Row) []string {
+	var names []string
+	extra := 0
+	for _, r := range rows {
+		if !r.Unconfirmed {
+			continue
+		}
+		if len(names) < 10 {
+			names = append(names, r.Module)
+			continue
+		}
+		extra++
+	}
+	if extra > 0 {
+		names = append(names, fmt.Sprintf("and %d more", extra))
+	}
+	return names
+}
+
+// confirmPause is how long the confirmation pass waits before its first
+// re-read, so that a throttling window has a chance to close. The reads
+// themselves are serial, which is the condition the first pass did not have.
+var confirmPause = 2 * time.Second
+
+// sweepProxy is the seam a test replaces to point a whole run at a double.
+// It exists because the confirmation rule below is only observable END TO END
+// — a unit test of askProxyWith cannot see whether the verdict loop, the
+// exposure split and the exit status agree with it, and that gap is how a
+// mechanism gets built and never wired up.
+var sweepProxy = NewProxy
+
 func askProxy(rows []Row, jobs int) {
+	askProxyWith(sweepProxy(), rows, jobs, confirmPause)
+}
+
+// askProxyWith fills in what the proxy serves for every row — concurrently —
+// and then CONFIRMS every unpublished answer, serially.
+//
+// ⛔ ONE 404 UNDER A SWEEP IS A RUMOUR, NOT AN ANSWER (#17). A fleet-scale run
+// labelled published, exposed modules "unpublished", and `exposure()` counts
+// that as housekeeping rather than as consumer exposure: the finding was not
+// lost and the run did not fail, it was RECLASSIFIED DOWNWARDS — and the
+// per-module control passed, so the only run that was wrong was the big one.
+// That is the shape of `a-scan-that-could-not-read-reported-zero`, with the
+// extra sting that the small, cheap check agrees with the truth.
+//
+// The absence is therefore re-read once with nothing else in flight, after a
+// pause. Two 404s are an answer. A disagreement keeps the PUBLISHED answer and
+// SAYS the first read was retried, because a sweep that silently self-corrects
+// teaches nobody and the next occurrence would be invisible. A re-read that
+// fails leaves the row unconfirmed, which is unreadable — never housekeeping.
+func askProxyWith(p *Proxy, rows []Row, jobs int, pause time.Duration) {
 	if jobs < 1 {
 		jobs = 1
 	}
-	p := NewProxy()
 	ctx := context.Background()
+	// Written at its own index by its own goroutine, so there is no race and
+	// no lock: the second pass needs the status the first read answered.
+	firstStatus := make([]int, len(rows))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, jobs)
 	for i := range rows {
 		wg.Add(1)
-		go func(r *Row) {
+		go func(i int) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			ver, err := p.Latest(ctx, r.Module)
-			if errors.Is(err, ErrUnpublished) {
-				r.Note = "unpublished"
-				return
-			}
-			if err != nil {
-				r.Note = "proxy: " + err.Error()
-				return
-			}
-			r.Latest = ver
-			src, err := p.Mod(ctx, r.Module, ver)
-			if err != nil {
-				r.Note = "proxy: " + err.Error()
-				return
-			}
-			fl, err := ParseFloors(src)
-			if err != nil {
-				r.Note = "published go.mod unparseable: " + err.Error()
-				return
-			}
-			r.Published = fl
-		}(&rows[i])
+			firstStatus[i] = readPublished(ctx, p, &rows[i]).absent
+		}(i)
 	}
 	wg.Wait()
+
+	first := true
+	for i := range rows {
+		r := &rows[i]
+		if firstStatus[i] == 0 {
+			continue
+		}
+		if first {
+			time.Sleep(pause)
+			first = false
+		}
+		was := firstStatus[i]
+		// Everything the first read derived is cleared, and the row's identity
+		// is carried over by name. A whole-struct reset is deliberate: if a
+		// field is ever added to Row and forgotten here it empties a column,
+		// which a test sees, instead of leaking a stale derived value.
+		*r = Row{Module: r.Module, Repo: r.Repo, Local: r.Local, LocalFile: r.LocalFile}
+		got := readPublished(ctx, p, r)
+		retried := fmt.Sprintf("a first read under %d concurrent queries answered %d", jobs, was)
+		switch {
+		case got.absent != 0:
+			// Two independent reads agree: this module really is not there.
+			r.Note = fmt.Sprintf("unpublished (%d, re-read %d)", was, got.absent)
+			r.Unpublished = true
+		case got.exists && r.Note == "":
+			r.Note = "published on re-read; " + retried
+		case got.exists:
+			// The module is there and a LATER step failed — an unparseable
+			// published go.mod, a version that moved between the two calls.
+			// The first read was still wrong about the module existing.
+			r.Note = fmt.Sprintf("%s; published on re-read, %s", r.Note, retried)
+		default:
+			r.Note = fmt.Sprintf("unpublished (%d) UNCONFIRMED: the re-read neither "+
+				"confirmed nor contradicted it (%s)", was, r.Note)
+			r.Unconfirmed = true
+		}
+	}
+}
+
+// A proxyRead is what ONE read of the proxy established, which is three
+// outcomes and not two.
+//
+// ⛔ THE THIRD ONE IS THE WHOLE POINT. A read that failed is not a read that
+// found nothing: #17 is exactly the second being reported as the first. So
+// "the proxy says it is not there", "the module is there" and "nothing was
+// established" are separate answers here, and the confirmation pass needs all
+// three — a network error on a re-read proves nothing about the module, and
+// must not be allowed to confirm, or to contradict, the first read.
+type proxyRead struct {
+	absent int  // nonzero: the status with which the proxy denied the module
+	exists bool // @latest answered, so the module IS on the proxy
+}
+
+// readPublished fills one row from the proxy and says what it established.
+// Notes for the steps after @latest are written onto the row.
+func readPublished(ctx context.Context, p *Proxy, r *Row) proxyRead {
+	ver, err := p.Latest(ctx, r.Module)
+	if st := unpublishedStatus(err); st != 0 {
+		return proxyRead{absent: st}
+	}
+	if errors.Is(err, ErrUnpublished) {
+		// A sentinel carrying no status: this proxy never produces one, but a
+		// test double or a later caller can, and reading it as anything other
+		// than an absence would be the original defect in a new place.
+		return proxyRead{absent: http.StatusNotFound}
+	}
+	if err != nil {
+		r.Note = "proxy: " + err.Error()
+		return proxyRead{}
+	}
+	// From here the module exists whatever else fails: @latest answered for it.
+	r.Latest = ver
+	src, err := p.Mod(ctx, r.Module, ver)
+	if err != nil {
+		r.Note = "proxy: " + err.Error()
+		return proxyRead{exists: true}
+	}
+	fl, err := ParseFloors(src)
+	if err != nil {
+		r.Note = "published go.mod unparseable: " + err.Error()
+		return proxyRead{exists: true}
+	}
+	r.Published = fl
+	r.ProxyRead = true
+	return proxyRead{exists: true}
 }
 
 func printModules(out io.Writer, rows []Row, o options, c Census) {

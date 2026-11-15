@@ -16,6 +16,37 @@ import (
 // floor" are different states and only one of them is a defect.
 var ErrUnpublished = errors.New("not published")
 
+// An UnpublishedError is ErrUnpublished with the status that said so.
+//
+// ⛔ THE STATUS IS KEPT BECAUSE THE FIRST OCCURRENCE WAS UNDIAGNOSABLE WITHOUT
+// IT. A fleet-scale sweep labelled published modules "unpublished" (#17) and
+// the note recorded no code, so afterwards there was no way to tell a 404 ("no
+// such module") from a 410 ("gone"), and no way to show the sweep had been
+// answered at all rather than failing. A finding whose next occurrence cannot
+// be diagnosed is half a finding, and that omission was part of the defect.
+type UnpublishedError struct {
+	Path   string
+	Status int
+}
+
+func (e *UnpublishedError) Error() string {
+	return fmt.Sprintf("%s: not published (%d)", e.Path, e.Status)
+}
+
+// Is keeps errors.Is(err, ErrUnpublished) true, so no existing caller has to
+// learn about the status in order to keep working.
+func (e *UnpublishedError) Is(target error) bool { return target == ErrUnpublished }
+
+// unpublishedStatus returns the status an unpublished answer carried, or 0 if
+// the error is not one. Callers use it to put the code in a note.
+func unpublishedStatus(err error) int {
+	var u *UnpublishedError
+	if errors.As(err, &u) {
+		return u.Status
+	}
+	return 0
+}
+
 // A Proxy asks the Go module proxy what a module publishes.
 //
 // The proxy is used rather than the GitHub API on purpose. It needs no
@@ -117,7 +148,7 @@ func (p *Proxy) get(ctx context.Context, path string) ([]byte, error) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound, http.StatusGone:
-		return nil, ErrUnpublished
+		return nil, &UnpublishedError{Path: path, Status: resp.StatusCode}
 	default:
 		return nil, fmt.Errorf("%s: %s", path, resp.Status)
 	}

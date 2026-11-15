@@ -17,9 +17,14 @@ func TestTheExposureSplitSeparatesWhatAConsumerCanReach(t *testing.T) {
 		{Module: "example.com/b", Verdict: NoFloor},
 		// Housekeeping: nobody can install these, so only a local build
 		// honours their floor.
-		{Module: "example.com/c", Verdict: Below, Note: "unpublished"},
-		{Module: "example.com/d", Verdict: NoFloor, Note: "unpublished"},
-		{Module: "example.com/e", Verdict: Below, Note: "unpublished"},
+		// The classification is the FIELD. These rows carry a note too,
+		// spelling the status that said so, and the note's text is read by
+		// nobody: it used to be the discriminator, and that made #17's fix
+		// — which adds "(404)" to it — a silent reclassification of every
+		// one of these rows into the campaign.
+		{Module: "example.com/c", Verdict: Below, Unpublished: true, Note: "unpublished (404, re-read 404)"},
+		{Module: "example.com/d", Verdict: NoFloor, Unpublished: true, Note: "unpublished (410, re-read 410)"},
+		{Module: "example.com/e", Verdict: Below, Unpublished: true, Note: "unpublished (404, re-read 404)"},
 		// Neither: already at or above the floor.
 		{Module: "example.com/f", Verdict: OK},
 		// Nor this: it FAILS CLOSED under GOTOOLCHAIN=local rather than
@@ -56,7 +61,7 @@ func TestTheExposureSplitSeparatesWhatAConsumerCanReach(t *testing.T) {
 // reads the published go.mod and not the branch.
 func TestAFixThatWasNeverReleasedIsCountedApart(t *testing.T) {
 	rows := []Row{
-		{Module: "example.com/a", Verdict: Below, Note: "fixed locally, UNRELEASED"},
+		{Module: "example.com/a", Verdict: Below, Unreleased: true, Note: "fixed locally, UNRELEASED"},
 		{Module: "example.com/b", Verdict: Below},
 	}
 	pub, unpub, unreleased := exposure(rows)

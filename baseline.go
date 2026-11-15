@@ -92,7 +92,7 @@ func byDirective(rows []Row, offline bool) ([]string, map[string]int) {
 		// The floor that was JUDGED is the one a campaign has to name, and for
 		// a published module that is the published one, not the working tree's.
 		declared := r.Published.Go
-		if offline || r.Note == "unpublished" {
+		if offline || r.Unpublished {
 			declared = r.Local.Go
 		}
 		if declared == "" {
@@ -141,7 +141,7 @@ func reposOf(out io.Writer, rows []Row, declares string, offline bool) (int, err
 		}
 		if declares != "" {
 			got := r.Published.Go
-			if offline || r.Note == "unpublished" {
+			if offline || r.Unpublished {
 				got = r.Local.Go
 			}
 			if got == "" {

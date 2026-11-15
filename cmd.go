@@ -80,6 +80,14 @@ For the advisories themselves, vulnscan runs govulncheck across the fleet and
 vulngate judges one run. This tool runs nothing and needs no credential: it
 reads the contract.
 
+An "unpublished" answer is CONFIRMED before it is believed. A module the proxy
+denies is read a second time, serially, after a pause — because one 404 under a
+sweep of hundreds is a rumour, and a wrong one moves a real exposure into the
+half of the split nobody acts on. Two denials are an answer and the note names
+both statuses. A disagreement keeps the published answer and says it retried. A
+re-read that establishes nothing leaves the module UNKNOWN, and then nothing is
+derived from the run at all: no table, no baseline, no --repos list, exit 2.
+
 Exit status: 0 clean, 1 at least one module exposed, 2 the measurement could
 not be made.
 
@@ -127,7 +135,8 @@ func RootCmd() *cobra.Command {
 	f.StringVarP(&owners, "owners", "o", "", "comma-separated owner globs the report is about, e.g. \"go-*\"; "+
 		"a module in no git work tree, or under another owner, is SET ASIDE and counted. "+
 		"Empty means every owner, which measures a machine and not a fleet")
-	f.IntVarP(&opt.jobs, "jobs", "j", 8, "concurrent proxy queries")
+	f.IntVarP(&opt.jobs, "jobs", "j", 8, "concurrent proxy queries; an \"unpublished\" "+
+		"answer from any of them is re-read serially before it is believed")
 	f.BoolVar(&opt.offline, "offline", false, "do not query the proxy; report what the working trees declare")
 	f.BoolVarP(&opt.listOnly, "list", "l", false, "print the module paths found and stop")
 	f.BoolVarP(&opt.verbose, "verbose", "v", false, "name every go.mod set aside, and every disagreement between worktrees")

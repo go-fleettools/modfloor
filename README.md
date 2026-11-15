@@ -78,7 +78,9 @@ finished.
 
 Exit status: **0** clean, **1** at least one module exposed, **2** the
 measurement could not be made. A lane that cannot tell "found a problem" from
-"could not look" eventually reads the second as the first.
+"could not look" eventually reads the second as the first — and a module whose
+absence from the proxy could not be **confirmed** is the second, not a module
+nobody can install. See [the confirmation rule](#what-it-reads-and-what-it-refuses-to-do).
 
 ## What it reads, and what it refuses to do
 
@@ -125,6 +127,25 @@ never published imposes it only on somebody building from a clone. A third line
 counts the modules already fixed in their working tree and **not released**,
 which is the state where the pull request is merged and the work is not
 finished.
+
+⛔ **And an "unpublished" answer is confirmed before it is believed**, because
+that split is the one a wrong answer hides behind. A fleet-scale sweep of 855
+modules labelled *published, exposed* modules `unpublished` — moving them from
+*"a consumer builds unpatched code"* into *"ours to tidy up"* — while the
+single-module run of the very same modules was correct. Nothing failed and
+nothing was lost: the finding was **reclassified downwards**, and only the big
+run was wrong. So a module the proxy denies is read again, serially, after a
+pause:
+
+| what two reads said | what the row becomes |
+| --- | --- |
+| denied, denied | `unpublished (404, re-read 404)` — housekeeping, and the note names both statuses |
+| denied, then answered | **published**, with a note saying a first read under *N* concurrent queries answered 404 |
+| denied, then nothing established | **UNKNOWN** — and then nothing is derived from the run: no table, no baseline, no `--repos` list, exit **2** |
+
+A re-read that fails proves nothing about the module, so it may neither confirm
+nor contradict the first one. A sweep that silently self-corrected would teach
+nobody, which is why the retry is printed rather than hidden.
 
 Measured 2026-11-01, with the population printed beside it because a count is
 only as good as the set it counts over:

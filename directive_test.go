@@ -20,7 +20,8 @@ func TestTheExposureIsGroupedByTheFloorEachModuleDeclares(t *testing.T) {
 		{Module: "d", Verdict: NoFloor},
 		// Judged on the WORKING TREE because it was never published, so that
 		// is the floor a campaign would have to name.
-		{Module: "e", Local: Floors{Go: "1.22"}, Verdict: Below, Note: "unpublished"},
+		{Module: "e", Local: Floors{Go: "1.22"}, Verdict: Below, Unpublished: true,
+			Note: "unpublished (404, re-read 404)"},
 		// Neither of these is work.
 		{Module: "f", Published: Floors{Go: "1.27.3"}, Verdict: OK},
 		{Module: "g", Published: Floors{Go: "1.26.0"}, Verdict: Pinned},
