@@ -8,14 +8,39 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"time"
 )
 
 // osExit is a variable so that a test can observe the status without ending
 // the test binary.
 var osExit = os.Exit
 
+// The staleness note's three inputs are variables for one reason: so that a
+// test can assert main ACTUALLY CALLS IT. Six tests cover the logic in
+// selfstale.go, and none of them would notice the one line in main being
+// deleted — which is precisely the defect class `a-mechanism-built-but-never
+// -wired`. Verified by mutation: removing that call turns
+// TestMainPrintsTheNoteItsLogicProduces red.
+var (
+	staleErr     io.Writer = os.Stderr
+	staleProxy             = NewProxy
+	staleTimeout           = 2 * time.Second
+)
+
 func main() {
+	// ⛔ WIRED IN main AND NOWHERE ELSE, deliberately. A mechanism that exists
+	// and is never called is the defect recorded as `a-mechanism-built-but-never
+	// -wired`, so this line is the whole point of selfstale.go. It sits here
+	// rather than in RootCmd so that the tests, which drive the command
+	// directly, never reach the network for it.
+	//
+	// 2s: long enough for one proxy call on a working connection, short enough
+	// that a report is not held up by a broken one. Failure is silent by
+	// contract — see WarnIfStale.
+	WarnIfStale(staleErr, staleProxy(), staleTimeout)
+
 	err := RootCmd().Execute()
 	if err == nil {
 		return
