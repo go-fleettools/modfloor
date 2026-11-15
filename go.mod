@@ -25,7 +25,24 @@ module github.com/go-fleettools/modfloor
 // reports 8; with the directive at 1.27.2, `GOTOOLCHAIN=local go build` on
 // 1.27.1 REFUSES — "go.mod requires go >= 1.27.2" — instead of silently
 // building the vulnerable binary.
-go 1.27.3
+//
+//   1.27.3 -> 1.27.4   GO-2026-6859 (net/http), fix RELEASED in 1.27.4. Raised
+//                      2026-11-15. THIRD raise in three weeks.
+//
+// ⛔ And the tool found its own repository BELOW: `modfloor --floor 1.27.4`
+// read the directive this module PUBLISHED at v0.8.1 from the proxy, together
+// with ten siblings, and eight of the eleven read BELOW. A tool that measures
+// other modules' floors shipping a stale one is the defect this file's first
+// paragraph exists to refuse, so it is recorded rather than quietly corrected.
+//
+// ⛔ RENOVATE WILL NEVER OFFER THIS UPDATE — measured on 2026-11-15, not
+// assumed. Its github-actions manager maintains the CI pin (`with: go-version`,
+// dependency `go`, type uses-with: go-fleettools/docs#29 is exactly that), and
+// its gomod manager SEES this directive — the dependency dashboard lists it
+// under "Detected Dependencies" — yet offers nothing for it. Of the three pins
+// this tool was written to keep apart, the only one a consumer honours is the
+// unwatched one.
+go 1.27.4
 
 require (
 	github.com/spf13/cobra v1.10.2
