@@ -80,6 +80,24 @@ For the advisories themselves, vulnscan runs govulncheck across the fleet and
 vulngate judges one run. This tool runs nothing and needs no credential: it
 reads the contract.
 
+A published floor that was never READ is not a floor of nothing. Without that
+rule a blank published floor reads as "no-go", "no-go" is an exposure, and a
+proxy that answered nothing at all produces a complete campaign: measured on
+2026-11-15, a sweep in which every read failed reported "1229 modules declare a
+floor below 1.27.4 … they live in 1091 repositories … of those, 1229 are
+PUBLISHED on the proxy", and exited 1. Such a row is now "unreadable", counted
+apart, and the run exits 2 — after printing the table, whose NOTE column says
+what failed. Nothing another tool consumes (--repos, --write-baseline,
+--baseline) is written at all.
+
+An "unpublished" answer is CONFIRMED before it is believed. A module the proxy
+denies is read a second time, serially, after a pause — because one 404 under a
+sweep of hundreds is a rumour, and a wrong one moves a real exposure into the
+half of the split nobody acts on. Two denials are an answer and the note names
+both statuses. A disagreement keeps the published answer and says it retried. A
+re-read that establishes nothing leaves the module UNKNOWN, and then nothing is
+derived from the run at all: no table, no baseline, no --repos list, exit 2.
+
 Exit status: 0 clean, 1 at least one module exposed, 2 the measurement could
 not be made.
 
@@ -127,7 +145,8 @@ func RootCmd() *cobra.Command {
 	f.StringVarP(&owners, "owners", "o", "", "comma-separated owner globs the report is about, e.g. \"go-*\"; "+
 		"a module in no git work tree, or under another owner, is SET ASIDE and counted. "+
 		"Empty means every owner, which measures a machine and not a fleet")
-	f.IntVarP(&opt.jobs, "jobs", "j", 8, "concurrent proxy queries")
+	f.IntVarP(&opt.jobs, "jobs", "j", 8, "concurrent proxy queries; an \"unpublished\" "+
+		"answer from any of them is re-read serially before it is believed")
 	f.BoolVar(&opt.offline, "offline", false, "do not query the proxy; report what the working trees declare")
 	f.BoolVarP(&opt.listOnly, "list", "l", false, "print the module paths found and stop")
 	f.BoolVarP(&opt.verbose, "verbose", "v", false, "name every go.mod set aside, and every disagreement between worktrees")
