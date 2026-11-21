@@ -73,6 +73,7 @@ func TestAnUnmatchedDeclaresNamesTheFloorsThatExist(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, filepath.Join(root, "one"), "go-fleettools/one")
 	write(t, filepath.Join(root, "one", "go.mod"), "module github.com/go-fleettools/one\n\ngo 1.27.1\n")
+	hasGoCode(t, filepath.Join(root, "one"))
 
 	o := offlineOpts(root, "1.27.3", ParseOwners("go-fleettools"))
 	o.repos, o.declares = true, "1.22"

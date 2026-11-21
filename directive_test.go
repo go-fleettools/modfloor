@@ -74,8 +74,10 @@ func TestTheReportNamesEachFromValue(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, root+"/one", "go-fleettools/one")
 	write(t, root+"/one/go.mod", "module github.com/go-fleettools/one\n\ngo 1.27.1\n")
+	hasGoCode(t, root+"/one")
 	fakeRepo(t, root+"/two", "go-fleettools/two")
 	write(t, root+"/two/go.mod", "module github.com/go-fleettools/two\n\ngo 1.27.2\n")
+	hasGoCode(t, root+"/two")
 
 	var out strings.Builder
 	if code, _, err := reportModules(&out, &out, offlineOpts(root, "1.27.3", ParseOwners("go-fleettools"))); err != nil || code != 1 {

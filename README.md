@@ -183,6 +183,45 @@ the repository's own path — `github.com/<owner>/<name>`, or a subdirectory or
 `/v2` of it — is set aside as `published by another project`, counted on the
 population line, and named by `--verbose`.
 
+⛔ **And a module we publish is still not one anybody installs.** A Hugo landing
+site is a module with **no Go packages**: its `go.mod` exists only to pin a
+theme module, and nobody runs `go install github.com/go-tex/go-tex.github.io`.
+Its floor binds no consumer, so a verdict about it is *correct and unusable* —
+which is how a column teaches its reader to skim. A module in a work tree whose
+own tree holds no `.go` file an ordinary build could compile is set aside as
+`with no buildable Go package`, counted on the population line, and named by
+`--verbose`.
+
+Measured on 2026-11-21 over the local clones, offline, against floor 1.27.4,
+with the check and without it (two runs about 90 seconds apart on a tree some
+25 sessions are working in, so the populations differ by three `go.mod` files):
+
+```
+without:  12067 go.mod seen, 1253 kept    ok=428  BELOW=825
+with:     12064 go.mod seen,  914 kept    ok=100  BELOW=814
+```
+
+339 modules left the population and **only 11 of them were exposures**. The
+other 328 were *clean* — which is the part worth reading twice. Landing sites
+are renovated like everything else, so they passed; the fleet's compliance
+therefore read **34 % clean (428 of 1253)** when it was **11 % (100 of 914)**.
+Setting them aside did not only take noise out of the exposure column, it took
+a flattering numerator out of the clean one.
+
+⛔ **The test is the packages, never the name.** `go-pkgx/go-pkgx.github.io`
+ships four Go modules under `tools/`, so a rule keyed on `*.github.io` would
+exempt real code — a false clean rather than noise. And the case no name would
+have caught: `github.com/go-fft/fft/internal/kernels/asmgen` holds `tools.go`
+(`//go:build tools`) and three generators carrying `//go:build ignore`, its
+`amd64` generator being a nested module of its own. So a file counts when
+**some** ordinary configuration compiles it — `//go:build windows` counts,
+`foo_arm64.go` counts, `//go:build tools` does not, and `//go:build !windows`
+counts even though evaluating it once with `windows` true says otherwise. A
+nested module's code speaks for that module alone, and a directory that could
+not be read is counted **unreadable**, never as an absence of code. Aligned
+with [go-fleettools/fleettools#206](https://github.com/go-fleettools/fleettools/issues/206),
+which asks `gofloor` the same question.
+
 A measurement that found nothing **refuses** rather than reporting a clean
 fleet. Zero exposed modules out of zero modules is the best possible value in
 its column, which is exactly how an unopened measurement reads as perfection.

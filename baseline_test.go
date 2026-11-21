@@ -273,10 +273,12 @@ func TestTheRatchetPassesTheOldExposureAndFiresOnANewOne(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, filepath.Join(root, "old"), "go-fleettools/old")
 	write(t, filepath.Join(root, "old", "go.mod"), "module github.com/go-fleettools/old\n\ngo 1.27.1\n")
+	hasGoCode(t, filepath.Join(root, "old"))
 	// Measured and CLEAN at recording time. Without a clean module in the
 	// baseline there is nothing a regression can be told apart from.
 	fakeRepo(t, filepath.Join(root, "clean"), "go-fleettools/clean")
 	write(t, filepath.Join(root, "clean", "go.mod"), "module github.com/go-fleettools/clean\n\ngo 1.27.3\n")
+	hasGoCode(t, filepath.Join(root, "clean"))
 	path := filepath.Join(t.TempDir(), "floor.txt")
 
 	// Recording finds an exposure and still exits 0: it states where the
@@ -305,6 +307,7 @@ func TestTheRatchetPassesTheOldExposureAndFiresOnANewOne(t *testing.T) {
 	// command made for real, eight times, 80 minutes after its own baseline.
 	fakeRepo(t, filepath.Join(root, "arrived"), "go-fleettools/arrived")
 	write(t, filepath.Join(root, "arrived", "go.mod"), "module github.com/go-fleettools/arrived\n\ngo 1.27.2\n")
+	hasGoCode(t, filepath.Join(root, "arrived"))
 	code, out, _ = runCmd(t, "--dir", root, "--owners", "go-fleettools", "--offline",
 		"--floor", "1.27.3", "--baseline", path)
 	if code != 0 {

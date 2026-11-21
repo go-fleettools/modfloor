@@ -52,10 +52,16 @@ func TestTheWalkSetsAsideAForeignModuleAndCountsIt(t *testing.T) {
 	// The repository's own module, below the floor: a real exposure.
 	write(t, filepath.Join(root, "pantry", "go.mod"),
 		"module github.com/tannevaled/pantry\n\ngo 1.27.1\n")
+	hasGoCode(t, filepath.Join(root, "pantry"))
 	// Two other projects' sources, carried inside it. Both below the floor,
 	// and neither of them ours to raise.
+	//
+	// ⛔ They are given Go code ON PURPOSE: that makes "set aside" here mean
+	// "another project publishes it", the thing under test, and not "no
+	// buildable package", which would pass this test for the wrong reason.
 	for dir, module := range map[string]string{"yaml": "sigs.k8s.io/yaml", "expr": "cel.dev/expr"} {
 		write(t, filepath.Join(root, "pantry", "srcs", dir, "go.mod"), "module "+module+"\n\ngo 1.22\n")
+		hasGoCode(t, filepath.Join(root, "pantry", "srcs", dir))
 	}
 
 	var out, errOut strings.Builder

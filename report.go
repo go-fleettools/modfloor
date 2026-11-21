@@ -129,6 +129,7 @@ type Census struct {
 	OutOfScope int // modules whose owner is not in the declared population
 	NotInRepo  int // modules in no git work tree at all: caches, archives
 	Foreign    int // modules another project publishes, found inside one of ours
+	NoPackages int // modules with no Go package a consumer could build
 	Modules    int // distinct modules kept
 }
 
@@ -205,6 +206,27 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 				}
 				continue
 			}
+			// ⛔ AND A MODULE WE PUBLISH IS STILL NOT ONE ANYBODY INSTALLS: a
+			// go.mod is not a package. A landing site's
+			// go.mod exists to pin a theme module, and its floor binds no
+			// consumer because there is nothing to install. Judged by the
+			// PACKAGES, never by the repository's name — see packages.go (#19).
+			hasPkgs, err := HasGoPackages(filepath.Dir(f))
+			if err != nil {
+				c.Unreadable++
+				if o.verbose {
+					fmt.Fprintf(errOut, "⚠ %s: could not look for Go packages: %v\n", short(f), err)
+				}
+				continue
+			}
+			if !hasPkgs {
+				c.NoPackages++
+				if o.verbose {
+					fmt.Fprintf(errOut, "⚠ no packages: %s declares %s and holds no Go code a consumer could build\n",
+						short(f), fl.Module)
+				}
+				continue
+			}
 
 			// First clone wins; a second is noted only if it disagrees, since
 			// two worktrees of one repository legitimately differ mid-branch.
@@ -236,9 +258,9 @@ func reportModules(out, errOut io.Writer, o options) (int, Census, error) {
 		}
 		return 2, c, fmt.Errorf("no module of %s found in %s — %d go.mod files were "+
 			"seen and all were set aside (%d out of scope, %d in no work tree, "+
-			"%d published by another project). "+
+			"%d published by another project, %d with no buildable Go package). "+
 			"Nothing was measured, which is not the same as nothing being wrong",
-			o.owners, where, c.GoMods, c.OutOfScope, c.NotInRepo, c.Foreign)
+			o.owners, where, c.GoMods, c.OutOfScope, c.NotInRepo, c.Foreign, c.NoPackages)
 	}
 
 	rows := make([]Row, 0, len(local))
@@ -640,8 +662,9 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 	// declared on the command line, not guessed.
 	fmt.Fprintf(out, "\npopulation: owners %s — %d go.mod seen, %d kept; set aside: "+
 		"%d out of scope, %d in no work tree, %d published by another project, "+
-		"%d without a module directive, %d unreadable\n",
-		o.owners, c.GoMods, c.Modules, c.OutOfScope, c.NotInRepo, c.Foreign, c.NoModule, c.Unreadable)
+		"%d with no buildable Go package, %d without a module directive, %d unreadable\n",
+		o.owners, c.GoMods, c.Modules, c.OutOfScope, c.NotInRepo, c.Foreign,
+		c.NoPackages, c.NoModule, c.Unreadable)
 
 	if o.floor == "" {
 		fmt.Fprintf(out, "no floor given, so no verdict. Pass --floor 1.27.2 for one.\n")
