@@ -354,13 +354,7 @@ func FuzzConstraintOf(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, src string) {
-		e, ok := constraintOf([]byte(src))
-		if !ok {
-			return
-		}
-		if e == nil {
-			t.Fatal("constraintOf said it found a constraint and returned nil")
-		}
+		e := constraintOf([]byte(src))
 		// Must terminate, must not panic, and must answer the same way twice:
 		// the search is over a map's keys, and a verdict that depends on
 		// iteration order is a verdict that changes between runs.

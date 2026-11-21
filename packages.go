@@ -132,10 +132,11 @@ func regularFile(path string, d fs.DirEntry) bool {
 	if d.Type().IsRegular() {
 		return true
 	}
-	if d.Type()&fs.ModeSymlink == 0 {
-		return false
-	}
-	fi, err := os.Stat(path) // resolves the link; WalkDir itself never does
+	// Anything else is asked again THROUGH the link: WalkDir uses Lstat, so a
+	// symlink to real code arrives here as a symlink, while a FIFO stays a FIFO
+	// and a dangling link is an error. No separate test for ModeSymlink —
+	// os.Stat answers all three.
+	fi, err := os.Stat(path)
 	return err == nil && fi.Mode().IsRegular()
 }
 
@@ -151,15 +152,13 @@ func fileIsBuildable(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	expr, ok := constraintOf(src)
-	if !ok {
-		return true, nil // no constraint: every configuration builds it
-	}
-	return satisfiable(expr), nil
+	return satisfiable(constraintOf(src)), nil
 }
 
 func readPrologue(path string) ([]byte, error) {
 	f, err := os.Open(path)
+	// Explicit, although os.File's methods are nil-safe and would surface the
+	// same ErrInvalid from the read below: the error belongs to Open.
 	if err != nil {
 		return nil, err
 	}
@@ -167,12 +166,18 @@ func readPrologue(path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, maxConstraintPrologue))
 }
 
-// constraintOf returns the file's build constraint, if it has one.
+// constraintOf returns the file's build constraint, or nil when it has none
+// this walk can use.
 //
 // A //go:build line wins outright; otherwise every // +build line is ANDed,
 // which is what the old syntax meant. Both are looked for only above the
 // package clause, where the language puts them.
-func constraintOf(src []byte) (constraint.Expr, bool) {
+//
+// ⛔ NIL FOR BOTH "no constraint" AND "a constraint the toolchain would
+// reject", because they are the same decision downstream: treat the file as
+// buildable. One return value rather than a (expr, ok) pair, so there is no
+// second branch stating that decision a second time.
+func constraintOf(src []byte) constraint.Expr {
 	var plus []constraint.Expr
 	for _, raw := range strings.Split(string(src), "\n") {
 		line := strings.TrimSpace(raw)
@@ -187,26 +192,23 @@ func constraintOf(src []byte) (constraint.Expr, bool) {
 				// of a constraint and not an absence of code. Treat the file as
 				// buildable: the module stays judged and the defect stays
 				// visible where it is, in that file.
-				return nil, false
+				return nil
 			}
-			return e, true
+			return e
 		case constraint.IsPlusBuild(line):
 			if e, err := constraint.Parse(line); err == nil {
 				plus = append(plus, e)
 			}
 		}
 	}
-	switch len(plus) {
-	case 0:
-		return nil, false
-	case 1:
-		return plus[0], true
+	if len(plus) == 0 {
+		return nil
 	}
 	e := plus[0]
 	for _, next := range plus[1:] {
 		e = &constraint.AndExpr{X: e, Y: next}
 	}
-	return e, true
+	return e
 }
 
 // maxFreeTags bounds the satisfiability search. Past it the constraint is
