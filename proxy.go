@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // ErrUnpublished is returned when the proxy has no such module or version.
@@ -99,8 +101,106 @@ func ValidModulePath(s string) bool {
 // ErrBadModulePath means the path is not one that may be put in a URL.
 var ErrBadModulePath = errors.New("not a usable module path")
 
-// Latest reports the version @latest resolves to.
-func (p *Proxy) Latest(ctx context.Context, module string) (string, error) {
+// List returns the published versions from @v/list, or an UnpublishedError
+// if the proxy has no such module.
+func (p *Proxy) List(ctx context.Context, module string) ([]string, error) {
+	if !ValidModulePath(module) {
+		return nil, fmt.Errorf("%q: %w", module, ErrBadModulePath)
+	}
+	body, err := p.get(ctx, module+"/@v/list")
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(body)), nil
+}
+
+// FilterTaggedVersions returns the subset of versions that are valid semver,
+// not prereleases, and not +incompatible.
+func FilterTaggedVersions(versions []string) []string {
+	var out []string
+	for _, v := range versions {
+		if !semver.IsValid(v) {
+			continue
+		}
+		if semver.Prerelease(v) != "" {
+			continue
+		}
+		if strings.HasSuffix(v, "+incompatible") {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// MaxTaggedVersion returns the highest semver among tagged release versions,
+// or "" if none match.
+func MaxTaggedVersion(versions []string) string {
+	var max string
+	for _, v := range FilterTaggedVersions(versions) {
+		if max == "" || semver.Compare(v, max) > 0 {
+			max = v
+		}
+	}
+	return max
+}
+
+// ResolvedVersion is what a module's newest version resolution established.
+type ResolvedVersion struct {
+	Version   string // the version resolved to (semver max from @v/list, or from @latest)
+	FromList  bool   // true if resolved from @v/list
+	Endpoint  string // the version @latest answered, if queried
+	Disagreed bool   // true when @v/list and @latest answered different versions
+}
+
+// Resolve resolves the newest version of a module the way the go command does:
+// by reading @v/list, discarding prereleases and +incompatible, and taking the
+// semver maximum. If the list is empty (an untagged module, or the proxy returned
+// no list), it falls back to @latest.
+func (p *Proxy) Resolve(ctx context.Context, module string) (ResolvedVersion, error) {
+	if !ValidModulePath(module) {
+		return ResolvedVersion{}, fmt.Errorf("%q: %w", module, ErrBadModulePath)
+	}
+
+	list, listErr := p.List(ctx, module)
+	maxVer := ""
+	if listErr == nil {
+		maxVer = MaxTaggedVersion(list)
+	}
+
+	// If we got a valid maximum from @v/list, also query @latest to check if
+	// the proxy's @latest cache has settled or disagrees (#16).
+	if maxVer != "" {
+		endpointVer, endpointErr := p.EndpointLatest(ctx, module)
+		if endpointErr == nil && endpointVer != "" && endpointVer != maxVer {
+			return ResolvedVersion{
+				Version:   maxVer,
+				FromList:  true,
+				Endpoint:  endpointVer,
+				Disagreed: true,
+			}, nil
+		}
+		return ResolvedVersion{
+			Version:  maxVer,
+			FromList: true,
+			Endpoint: endpointVer,
+		}, nil
+	}
+
+	// No tagged releases in @v/list (or @v/list was absent): fall back to @latest.
+	endpointVer, err := p.EndpointLatest(ctx, module)
+	if err != nil {
+		return ResolvedVersion{}, err
+	}
+	return ResolvedVersion{
+		Version:  endpointVer,
+		FromList: false,
+		Endpoint: endpointVer,
+	}, nil
+}
+
+// EndpointLatest reads the @latest endpoint directly without consulting @v/list.
+func (p *Proxy) EndpointLatest(ctx context.Context, module string) (string, error) {
 	if !ValidModulePath(module) {
 		return "", fmt.Errorf("%q: %w", module, ErrBadModulePath)
 	}
@@ -116,6 +216,16 @@ func (p *Proxy) Latest(ctx context.Context, module string) (string, error) {
 		return "", fmt.Errorf("@latest for %s: no version in reply", module)
 	}
 	return info.Version, nil
+}
+
+// Latest reports the newest version of a module according to the go command's
+// rules: the highest tagged release from @v/list, or @latest if the list has none.
+func (p *Proxy) Latest(ctx context.Context, module string) (string, error) {
+	res, err := p.Resolve(ctx, module)
+	if err != nil {
+		return "", err
+	}
+	return res.Version, nil
 }
 
 // Mod fetches one published go.mod.
