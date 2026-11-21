@@ -557,7 +557,7 @@ type proxyRead struct {
 // readPublished fills one row from the proxy and says what it established.
 // Notes for the steps after @latest are written onto the row.
 func readPublished(ctx context.Context, p *Proxy, r *Row) proxyRead {
-	ver, err := p.Latest(ctx, r.Module)
+	res, err := p.Resolve(ctx, r.Module)
 	if st := unpublishedStatus(err); st != 0 {
 		return proxyRead{absent: st}
 	}
@@ -572,8 +572,13 @@ func readPublished(ctx context.Context, p *Proxy, r *Row) proxyRead {
 		return proxyRead{}
 	}
 	// From here the module exists whatever else fails: @latest answered for it.
-	r.Latest = ver
-	src, err := p.Mod(ctx, r.Module, ver)
+	r.Latest = res.Version
+	if res.Disagreed {
+		r.Note = fmt.Sprintf("@latest answered %s (proxy has not settled; list has %s)", res.Endpoint, res.Version)
+	} else if !res.FromList {
+		r.Note = "from @latest (no list)"
+	}
+	src, err := p.Mod(ctx, r.Module, res.Version)
 	if err != nil {
 		r.Note = "proxy: " + err.Error()
 		return proxyRead{exists: true}
