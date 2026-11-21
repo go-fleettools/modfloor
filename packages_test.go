@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // ⛔ THE INCIDENT (#19). Measured 2026-11-15 over this fleet: 351 of 843 rows
@@ -184,6 +186,148 @@ func TestEveryPlatformTheToolchainSupportsIsAStandardTag(t *testing.T) {
 	if pairs < 20 {
 		t.Fatalf("go tool dist list printed %d pairs; that is not a platform list", pairs)
 	}
+}
+
+// ⛔ A FIFO NAMED x.go BLOCKS open() UNTIL SOMEBODY WRITES TO IT. This walk
+// runs over trees ~25 sessions and every build tool on this machine write
+// into, and a sweep that stops dead says nothing at all — the worst failure
+// this package can have. The deadline is in the TEST so the mutant fails in
+// seconds instead of hanging the suite.
+func TestAFifoNamedLikeAGoFileIsNotOpened(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "x.go"), 0o600); err != nil {
+		t.Skip("cannot make a FIFO here:", err)
+	}
+	type answer struct {
+		got bool
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		got, err := HasGoPackages(dir)
+		done <- answer{got, err}
+	}()
+	select {
+	case a := <-done:
+		if a.err != nil {
+			t.Fatalf("HasGoPackages = %v: a FIFO is skipped, not an error", a.err)
+		}
+		if a.got {
+			t.Error("a FIFO was counted as a Go package")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("HasGoPackages did not return: it opened the FIFO and is waiting for a writer")
+	}
+}
+
+// The other side of the same guard: a symlink that resolves to a real Go file
+// IS code. Skipping every irregular entry would have been the easy wrong fix.
+func TestASymlinkToARealGoFileIsCode(t *testing.T) {
+	root := t.TempDir()
+	elsewhere := filepath.Join(root, "elsewhere")
+	write(t, filepath.Join(elsewhere, "code.go"), "package x\n")
+
+	mod := filepath.Join(root, "mod")
+	write(t, filepath.Join(mod, "go.mod"), "module example.com/m\n\ngo 1.27.1\n")
+	if err := os.Symlink(filepath.Join(elsewhere, "code.go"), filepath.Join(mod, "link.go")); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	got, err := HasGoPackages(mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("a symlink to a real Go file is the module's code")
+	}
+
+	// And a dangling one is not code and not an error: os.Stat fails, the entry
+	// is skipped, and the module stays in the population.
+	bare := filepath.Join(root, "bare")
+	write(t, filepath.Join(bare, "go.mod"), "module example.com/b\n\ngo 1.27.1\n")
+	if err := os.Symlink(filepath.Join(root, "gone", "code.go"), filepath.Join(bare, "link.go")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = HasGoPackages(bare); err != nil || got {
+		t.Errorf("HasGoPackages on a dangling symlink = %v, %v; want false, nil", got, err)
+	}
+}
+
+// ⛔ A FILE THAT COULD NOT BE READ IS NOT A FILE WITH NO CODE IN IT. The whole
+// point of this check is which modules leave the population, so the one answer
+// it must never give is a quiet "no packages" for something it never saw.
+func TestAGoFileThatCannotBeReadIsAnErrorAndNotAnAbsence(t *testing.T) {
+	dir := t.TempDir()
+	shut := filepath.Join(dir, "x.go")
+	write(t, shut, "package x\n")
+	if err := os.Chmod(shut, 0o000); err != nil {
+		t.Skip("cannot make a file unreadable here:", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shut, 0o600) })
+	if f, err := os.Open(shut); err == nil {
+		f.Close()
+		t.Skip("this user reads a 0000 file anyway, so there is nothing to witness")
+	}
+	got, err := HasGoPackages(dir)
+	if err == nil {
+		t.Fatalf("HasGoPackages = %v, nil: a file it could not open was read as an absence of code", got)
+	}
+	if got {
+		t.Error("an error must not also claim the module has packages")
+	}
+}
+
+// ⛔ BOTH BOUNDS ARE DRIVEN TO THEIR EDGE THROUGH THE VARIABLE, never by
+// restating the number: a test that spells 20000 or 8 reddens the day the bound
+// legitimately moves and still never exercises the branch.
+//
+// Each bound's wrong answer must be "the module HAS packages", because the
+// other direction removes a module from the population without a word.
+func TestEachBoundGivesUpTowardsKeepingTheModule(t *testing.T) {
+	t.Run("too many files to scan", func(t *testing.T) {
+		defer func(n int) { maxGoFilesScanned = n }(maxGoFilesScanned)
+		maxGoFilesScanned = 2
+		dir := t.TempDir()
+		// Three files, none of them buildable. Under the bound the answer would
+		// be false; past it the walk gives up and says "has packages".
+		for _, name := range []string{"a.go", "b.go", "c.go"} {
+			write(t, filepath.Join(dir, name), "//go:build tools\n\npackage x\n")
+		}
+		got, err := HasGoPackages(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got {
+			t.Error("past its file bound the walk must keep the module, not set it aside unseen")
+		}
+
+		// The control: the same three files WITHIN the bound are correctly
+		// judged, so it is the bound that decided the answer above.
+		maxGoFilesScanned = 10
+		if got, err = HasGoPackages(dir); err != nil || got {
+			t.Errorf("within the bound: HasGoPackages = %v, %v; want false, nil", got, err)
+		}
+	})
+
+	t.Run("too many tags to search", func(t *testing.T) {
+		// Unsatisfiable (linux && !linux) and naming nine distinct standard
+		// tags, so it is past the search bound.
+		e, err := constraint.Parse(
+			"//go:build linux && !linux && darwin && amd64 && arm64 && arm && 386 && wasm && s390x && mips")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func(n int) { maxFreeTags = n }(maxFreeTags)
+		maxFreeTags = 8
+		if !satisfiable(e) {
+			t.Error("past its tag bound the search must give up towards buildable")
+		}
+		// The control: raise the bound and the same expression is correctly
+		// found unsatisfiable, so it was the bound and not the expression.
+		maxFreeTags = 12
+		if satisfiable(e) {
+			t.Error("linux && !linux is unsatisfiable, and with room to search it must be reported so")
+		}
+	})
 }
 
 // ⛔ EVERY PARSER GETS A FUZZER. constraintOf reads the top of files this walk

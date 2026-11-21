@@ -37,7 +37,12 @@ const maxConstraintPrologue = 64 << 10
 // reported as HAVING packages: the error direction is deliberate everywhere in
 // this file — a wrong answer must add noise to the report, never remove a
 // module from the population.
-const maxGoFilesScanned = 20000
+//
+// ⛔ A var, not a const, so a test can drive the walk TO this edge instead of
+// spelling 20000 in an assertion. A test that writes the implementation's
+// constant tests the constant: it reddens on every legitimate change to the
+// bound and never catches what it was written for.
+var maxGoFilesScanned = 20000
 
 // HasGoPackages reports whether the module tree rooted at dir holds at least
 // one .go file that an ordinary build could compile in SOME configuration.
@@ -211,7 +216,10 @@ func constraintOf(src []byte) (constraint.Expr, bool) {
 // of a tiny expression, and 16 would be 65536 — times maxGoFilesScanned, a
 // repository could then cost 1.3e9 evaluations of this walk. Real constraints
 // name one to four tags.
-const maxFreeTags = 8
+//
+// A var for the same reason as maxGoFilesScanned: a test drives the search to
+// this edge rather than restating the number.
+var maxFreeTags = 8
 
 // satisfiable reports whether any assignment of the STANDARD tags makes the
 // expression true, with every custom tag false.
@@ -222,6 +230,14 @@ const maxFreeTags = 8
 // The tags a consumer does not have to invent are therefore free variables,
 // and the tags they would have to pass with -tags are false.
 func satisfiable(e constraint.Expr) bool {
+	// ⛔ NIL MEANS "NO USABLE CONSTRAINT", AND THAT MEANS BUILDABLE. Both of the
+	// callers' "treat it as buildable" paths — no constraint at all, and a
+	// constraint the toolchain itself would reject — are the same decision as
+	// this one, so answering true here keeps the three in step rather than
+	// leaving a nil to panic on.
+	if e == nil {
+		return true
+	}
 	tags := map[string]bool{}
 	collectTags(e, tags)
 	var free []string
