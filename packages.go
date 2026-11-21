@@ -201,11 +201,15 @@ func constraintOf(src []byte) constraint.Expr {
 			}
 		}
 	}
-	if len(plus) == 0 {
-		return nil
-	}
-	e := plus[0]
-	for _, next := range plus[1:] {
+	// Folded from nil rather than from plus[0], so there is no length branch
+	// to test and no index to get wrong: no // +build line leaves e nil, which
+	// is this function's word for "no usable constraint".
+	var e constraint.Expr
+	for _, next := range plus {
+		if e == nil {
+			e = next
+			continue
+		}
 		e = &constraint.AndExpr{X: e, Y: next}
 	}
 	return e
