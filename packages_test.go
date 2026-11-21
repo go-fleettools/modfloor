@@ -8,9 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"syscall"
 	"testing"
-	"time"
 )
 
 // ⛔ THE INCIDENT (#19). Measured 2026-11-15 over this fleet: 351 of 843 rows
@@ -188,39 +186,8 @@ func TestEveryPlatformTheToolchainSupportsIsAStandardTag(t *testing.T) {
 	}
 }
 
-// ⛔ A FIFO NAMED x.go BLOCKS open() UNTIL SOMEBODY WRITES TO IT. This walk
-// runs over trees ~25 sessions and every build tool on this machine write
-// into, and a sweep that stops dead says nothing at all — the worst failure
-// this package can have. The deadline is in the TEST so the mutant fails in
-// seconds instead of hanging the suite.
-func TestAFifoNamedLikeAGoFileIsNotOpened(t *testing.T) {
-	dir := t.TempDir()
-	if err := syscall.Mkfifo(filepath.Join(dir, "x.go"), 0o600); err != nil {
-		t.Skip("cannot make a FIFO here:", err)
-	}
-	type answer struct {
-		got bool
-		err error
-	}
-	done := make(chan answer, 1)
-	go func() {
-		got, err := HasGoPackages(dir)
-		done <- answer{got, err}
-	}()
-	select {
-	case a := <-done:
-		if a.err != nil {
-			t.Fatalf("HasGoPackages = %v: a FIFO is skipped, not an error", a.err)
-		}
-		if a.got {
-			t.Error("a FIFO was counted as a Go package")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("HasGoPackages did not return: it opened the FIFO and is waiting for a writer")
-	}
-}
-
-// The other side of the same guard: a symlink that resolves to a real Go file
+// The other side of the FIFO guard (packages_fifo_test.go): a symlink that
+// resolves to a real Go file
 // IS code. Skipping every irregular entry would have been the easy wrong fix.
 func TestASymlinkToARealGoFileIsCode(t *testing.T) {
 	root := t.TempDir()
