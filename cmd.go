@@ -63,6 +63,15 @@ so the tool reported the PREVIOUS release's floor as the published one. The
 RESOLVED column names the version a consumer installs, and marks the row
 (@latest) when the fallback answered.
 
+A go.mod is not a package, and a module with no buildable Go package is SET
+ASIDE and counted, never judged: a Hugo landing site's go.mod exists only to pin
+a theme module, and nobody runs "go install github.com/<org>/<org>.github.io".
+The test is the PACKAGES, never the repository's name — a file counts when some
+ordinary configuration compiles it, so //go:build windows counts and
+//go:build tools does not. Measured on 2026-11-21: 339 of 1253 modules left the
+population, and only 11 of those were exposures, so the fleet's compliance had
+been reading 34% clean when it was 11%.
+
 Verdicts:
 
   ok          the go directive is at or above the floor

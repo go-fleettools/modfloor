@@ -306,6 +306,7 @@ func TestAnUnconfirmedRowStopsTheWholeRunRatherThanBeingCounted(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, root, "go-fleettools/a")
 	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/a\n\ngo 1.27.1\n")
+	hasGoCode(t, root)
 
 	opt := offlineOpts(root, "1.27.4", nil)
 	opt.offline = false
@@ -348,6 +349,7 @@ func TestAProxyThatAnswersNothingProducesNoCampaign(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, root, "go-fleettools/a")
 	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/a\n\ngo 1.27.1\n")
+	hasGoCode(t, root)
 
 	opt := offlineOpts(root, "1.27.4", nil)
 	opt.offline = false
@@ -381,6 +383,7 @@ func TestOfflineIsNotRefusedForAFloorItNeverMeantToRead(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, root, "go-fleettools/a")
 	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/a\n\ngo 1.27.1\n")
+	hasGoCode(t, root)
 
 	code, _, err := reportModules(io.Discard, io.Discard, offlineOpts(root, "1.27.4", nil))
 	if err != nil {
@@ -404,6 +407,7 @@ func TestNoListOrBaselineIsWrittenFromAFloorNobodyRead(t *testing.T) {
 	root := t.TempDir()
 	fakeRepo(t, root, "go-fleettools/a")
 	write(t, filepath.Join(root, "go.mod"), "module github.com/go-fleettools/a\n\ngo 1.27.1\n")
+	hasGoCode(t, root)
 
 	base := filepath.Join(t.TempDir(), "floor.txt")
 	for _, tc := range []struct {

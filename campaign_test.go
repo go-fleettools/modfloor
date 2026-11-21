@@ -44,10 +44,13 @@ func TestTheReportStatesTheCostInPullRequests(t *testing.T) {
 	one := filepath.Join(root, "one")
 	fakeRepo(t, one, "go-fleettools/one")
 	write(t, filepath.Join(one, "go.mod"), "module github.com/go-fleettools/one\n\ngo 1.27.1\n")
+	hasGoCode(t, one)
 	write(t, filepath.Join(one, "tools", "go.mod"), "module github.com/go-fleettools/one/tools\n\ngo 1.27.1\n")
+	hasGoCode(t, filepath.Join(one, "tools"))
 	two := filepath.Join(root, "two")
 	fakeRepo(t, two, "go-fleettools/two")
 	write(t, filepath.Join(two, "go.mod"), "module github.com/go-fleettools/two\n\ngo 1.27.1\n")
+	hasGoCode(t, two)
 
 	var out strings.Builder
 	code, c, err := reportModules(&out, &out, offlineOpts(root, "1.27.3", ParseOwners("go-fleettools")))
