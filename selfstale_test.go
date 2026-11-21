@@ -10,17 +10,27 @@ import (
 	"time"
 )
 
-// proxyServing answers @latest for one module with one version, and 404 for
-// anything else — the shape the real proxy has.
+// proxyServing answers for one module with one version, and 404 for anything
+// else — the shape the real proxy has.
+//
+// ⛔ IT SERVES BOTH VERSION ENDPOINTS, because a consumer's @latest is resolved
+// from @v/list and only falls back to @latest for an untagged module (#16).
+// While this double served @latest alone, the staleness check read a 404 for
+// the list and went SILENT — and silence is this function's success output, so
+// two tests caught it only because they assert the note's TEXT. A double that
+// serves one endpoint of a two-endpoint protocol measures the wrong one.
 func proxyServing(t *testing.T, module, version string) *Proxy {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/"+module+"/@latest" {
+		switch r.URL.Path {
+		case "/" + module + "/@v/list":
+			_, _ = w.Write([]byte(version + "\n"))
+		case "/" + module + "/@latest":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"Version":"` + version + `"}`))
-			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
 	return &Proxy{Base: srv.URL, Client: srv.Client()}

@@ -53,6 +53,16 @@ modfloor reads it from the module proxy, which is where a consumer reads it
 from too — not from the working tree, which may hold an unreleased fix, and not
 from a workflow file, which describes the build and not the contract.
 
+And it resolves the version the way the go command does, which is NOT the
+proxy's @latest endpoint. ` + "`go install m@latest`" + ` lists the versions and takes the
+highest release; @latest is consulted only when that list is empty, for a
+module with no tag. The two endpoints disagree for a while after a release —
+measured on 2026-11-15, five of eight modules released minutes earlier had
+@v/list already holding the new tag while @latest still named the previous one,
+so the tool reported the PREVIOUS release's floor as the published one. The
+RESOLVED column names the version a consumer installs, and marks the row
+(@latest) when the fallback answered.
+
 Verdicts:
 
   ok          the go directive is at or above the floor

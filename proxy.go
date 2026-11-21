@@ -161,8 +161,16 @@ func (p *Proxy) get(ctx context.Context, path string) ([]byte, error) {
 // written as '!' followed by its lower-case form, so that the protocol works on
 // case-insensitive filesystems.
 //
-// Implemented here rather than taken from golang.org/x/mod's module.EscapePath
-// to keep this a zero-dependency module.
+// ⛔ THE REASON THIS IS HAND-WRITTEN IS NOT THE ONE THAT USED TO BE RECORDED
+// HERE. The note said "to keep this a zero-dependency module", and that stopped
+// being true: golang.org/x/mod is a DIRECT requirement (go.mod), and
+// module.IsPseudoVersion and semver.Compare are already used. Corrected rather
+// than deleted, because a justification that outlived its premise is how a
+// hand-rolled copy of a standard routine survives review.
+//
+// The real reason it stays: module.EscapePath escapes a MODULE PATH and
+// rejects '@' and the rest, while what is escaped here is a whole proxy
+// request path — "mod/@v/v1.0.0.mod" — which that function is not for.
 func escapePath(path string) (string, error) {
 	if !strings.ContainsFunc(path, func(r rune) bool { return r >= 'A' && r <= 'Z' }) {
 		return path, nil

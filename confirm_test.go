@@ -36,17 +36,37 @@ type proxyDouble struct {
 	// failWith[module], if set, is a status answered INSTEAD of the truth once
 	// the denials run out: a read that establishes nothing.
 	failWith map[string]int
-	reads    map[string]int
+	// reads[module] counts the reads of the endpoint a resolution STARTS from.
+	// That endpoint moved from @latest to @v/list when #16 was fixed, and this
+	// counter followed it: it exists to witness the confirmation re-read, which
+	// is the first read repeated, whichever endpoint that is.
+	reads map[string]int
+	// versions[module] is the body @v/list answers. Absent means the default
+	// one-release list; an entry present and EMPTY means a published module
+	// with no tag, which is what drives the @latest fallback.
+	versions map[string][]string
+	// latestReads[module] counts reads of the @latest endpoint alone, so a test
+	// can assert the fallback was NOT consulted — one extra request per module
+	// over a fleet sweep is a cost, not a detail.
+	latestReads map[string]int
+	// latestFailWith[module], if set, is a status the @latest endpoint answers
+	// while the LIST still answers. It exists because the fallback has its own
+	// failure path: the list can be legitimately empty and the fallback read
+	// then fail, and a double that can only fail both at once cannot reach it.
+	latestFailWith map[string]int
 }
 
 func newProxyDouble(t *testing.T) *proxyDouble {
 	t.Helper()
 	d := &proxyDouble{
-		denyFirst: map[string]int{},
-		status:    map[string]int{},
-		published: map[string]string{},
-		failWith:  map[string]int{},
-		reads:     map[string]int{},
+		denyFirst:      map[string]int{},
+		status:         map[string]int{},
+		published:      map[string]string{},
+		failWith:       map[string]int{},
+		reads:          map[string]int{},
+		versions:       map[string][]string{},
+		latestReads:    map[string]int{},
+		latestFailWith: map[string]int{},
 	}
 	d.srv = httptest.NewServer(http.HandlerFunc(d.serve))
 	t.Cleanup(d.srv.Close)
@@ -62,8 +82,8 @@ func (d *proxyDouble) serve(w http.ResponseWriter, r *http.Request) {
 	defer d.mu.Unlock()
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	switch {
-	case strings.HasSuffix(path, "/@latest"):
-		mod := strings.TrimSuffix(path, "/@latest")
+	case strings.HasSuffix(path, "/@v/list"):
+		mod := strings.TrimSuffix(path, "/@v/list")
 		d.reads[mod]++
 		if d.denyFirst[mod] > 0 {
 			d.denyFirst[mod]--
@@ -71,6 +91,24 @@ func (d *proxyDouble) serve(w http.ResponseWriter, r *http.Request) {
 			if code == 0 {
 				code = http.StatusNotFound
 			}
+			w.WriteHeader(code)
+			return
+		}
+		if code := d.failWith[mod]; code != 0 {
+			w.WriteHeader(code)
+			return
+		}
+		vers, ok := d.versions[mod]
+		if !ok {
+			vers = []string{"v1.2.3"}
+		}
+		for _, v := range vers {
+			fmt.Fprintln(w, v)
+		}
+	case strings.HasSuffix(path, "/@latest"):
+		mod := strings.TrimSuffix(path, "/@latest")
+		d.latestReads[mod]++
+		if code := d.latestFailWith[mod]; code != 0 {
 			w.WriteHeader(code)
 			return
 		}
@@ -111,11 +149,11 @@ func TestAFourOhFourUnderASweepIsRetriedRatherThanBelieved(t *testing.T) {
 	if r.Unconfirmed {
 		t.Error("the re-read succeeded, so the row is not unconfirmed")
 	}
-	if r.Published.Go != "1.27.1" || r.Latest != "v1.2.3" || !r.ProxyRead {
+	if r.Published.Go != "1.27.1" || r.Resolved != "v1.2.3" || !r.ProxyRead {
 		t.Errorf("the published floor was not read: %+v", r)
 	}
 	if d.reads["example.com/a"] != 2 {
-		t.Errorf("@latest read %d times, want 2 (the first and its confirmation)",
+		t.Errorf("the version list was read %d times, want 2 (the first and its confirmation)",
 			d.reads["example.com/a"])
 	}
 	// ⛔ AND IT SAYS SO. A sweep that silently self-corrects teaches nobody,
