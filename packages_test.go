@@ -274,6 +274,11 @@ func TestAGoFileThatCannotBeReadIsAnErrorAndNotAnAbsence(t *testing.T) {
 	if got {
 		t.Error("an error must not also claim the module has packages")
 	}
+	// ⛔ AND IT MUST NAME THE FILE. A module holds hundreds; "permission
+	// denied" about one of them, unnamed, is a finding nobody can act on.
+	if !strings.Contains(err.Error(), "x.go") {
+		t.Errorf("the error does not name the file it is about: %v", err)
+	}
 }
 
 // ⛔ BOTH BOUNDS ARE DRIVEN TO THEIR EDGE THROUGH THE VARIABLE, never by

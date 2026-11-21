@@ -80,7 +80,7 @@ func HasGoPackages(dir string) (bool, error) {
 		if !strings.HasSuffix(d.Name(), ".go") || ignoredFile(d.Name()) {
 			return nil
 		}
-		if !regularFile(path, d) {
+		if !regularFile(path) {
 			return nil
 		}
 		seen++
@@ -128,17 +128,12 @@ func ignoredFile(name string) bool {
 // write into. A device node is the same hazard with a different shape. Only a
 // regular file, or a symlink that resolves to one, is opened — and skipping
 // something keeps the module in the population, which is the safe direction.
-// ⚠ The first test is a FAST PATH and the mutation sweep reports it as
-// surviving, correctly: with it deleted every regular file would simply be
-// asked again through os.Stat and get the same answer, one syscall later.
-func regularFile(path string, d fs.DirEntry) bool {
-	if d.Type().IsRegular() {
-		return true
-	}
-	// Anything else is asked again THROUGH the link: WalkDir uses Lstat, so a
-	// symlink to real code arrives here as a symlink, while a FIFO stays a FIFO
-	// and a dangling link is an error. No separate test for ModeSymlink —
-	// os.Stat answers all three.
+// It asks THROUGH any link, which is the whole point: WalkDir uses Lstat, so a
+// symlink to real code arrives as a symlink, a FIFO stays a FIFO, and a
+// dangling link is an error. One os.Stat answers all four cases, so there is no
+// fast path on d.Type() and no separate test for ModeSymlink — both would be
+// branches no input can tell apart from this line.
+func regularFile(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.Mode().IsRegular()
 }
@@ -160,12 +155,12 @@ func fileIsBuildable(path string) (bool, error) {
 
 func readPrologue(path string) ([]byte, error) {
 	f, err := os.Open(path)
-	// ⚠ Explicit, and the mutation sweep reports it as surviving, correctly:
-	// os.File's methods are nil-safe, so with this deleted the read below would
-	// surface ErrInvalid instead and the caller would still get an error. It
-	// stays because the error belongs to Open and says what failed.
+	// ⛔ THE PATH IS IN THE ERROR. Without it the caller reports "permission
+	// denied" about a module of hundreds of files, and os.File's methods being
+	// nil-safe, deleting this branch would still produce an error — a worse
+	// one, about nothing in particular. That is what the test asserts.
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	defer f.Close()
 	return io.ReadAll(io.LimitReader(f, maxConstraintPrologue))
@@ -191,18 +186,13 @@ func constraintOf(src []byte) constraint.Expr {
 		}
 		switch {
 		case constraint.IsGoBuild(line):
-			e, err := constraint.Parse(line)
-			// ⚠ Surviving mutation, and equivalent: constraint.Parse returns a
-			// nil expression with its error, so `return e` below would return
-			// the same nil this branch does. Kept because the two cases are the
-			// same DECISION and not the same accident.
-			if err != nil {
-				// ⛔ A constraint the toolchain would reject is not an absence
-				// of a constraint and not an absence of code. Treat the file as
-				// buildable: the module stays judged and the defect stays
-				// visible where it is, in that file.
-				return nil
-			}
+			// ⛔ A constraint the toolchain would reject is not an absence of a
+			// constraint and not an absence of code. Treat the file as
+			// buildable: the module stays judged and the defect stays visible
+			// where it is, in that file. constraint.Parse returns a nil
+			// expression with its error, and nil is exactly this function's
+			// word for that, so the error needs no branch of its own.
+			e, _ := constraint.Parse(line)
 			return e
 		case constraint.IsPlusBuild(line):
 			if e, err := constraint.Parse(line); err == nil {
