@@ -85,8 +85,13 @@ type Row struct {
 	Local     Floors // from the working tree, if a clone was found
 	LocalFile string
 	Published Floors // from the proxy's copy of @latest
-	Latest    string // the version @latest resolved to
-	Verdict   Verdict
+	// Resolved is the version a consumer's `go install <module>@latest`
+	// chooses, which is the highest release in the proxy's version list and
+	// NOT whatever the @latest endpoint answers. From names the endpoint that
+	// decided it, because the two disagree for a while after a release (#16).
+	Resolved string
+	From     Endpoint
+	Verdict  Verdict
 
 	// ⛔ THE CLASSIFICATION IS A FIELD, NOT THE NOTE'S TEXT. Four separate
 	// rules used to discriminate on `Note == "unpublished"` — the exposure
@@ -551,13 +556,13 @@ func askProxyWith(p *Proxy, rows []Row, jobs int, pause time.Duration) {
 // must not be allowed to confirm, or to contradict, the first read.
 type proxyRead struct {
 	absent int  // nonzero: the status with which the proxy denied the module
-	exists bool // @latest answered, so the module IS on the proxy
+	exists bool // the proxy resolved a version, so the module IS on the proxy
 }
 
 // readPublished fills one row from the proxy and says what it established.
 // Notes for the steps after @latest are written onto the row.
 func readPublished(ctx context.Context, p *Proxy, r *Row) proxyRead {
-	ver, err := p.Latest(ctx, r.Module)
+	ver, from, err := p.Resolve(ctx, r.Module)
 	if st := unpublishedStatus(err); st != 0 {
 		return proxyRead{absent: st}
 	}
@@ -571,8 +576,9 @@ func readPublished(ctx context.Context, p *Proxy, r *Row) proxyRead {
 		r.Note = "proxy: " + err.Error()
 		return proxyRead{}
 	}
-	// From here the module exists whatever else fails: @latest answered for it.
-	r.Latest = ver
+	// From here the module exists whatever else fails: the proxy answered for it.
+	r.Resolved = ver
+	r.From = from
 	src, err := p.Mod(ctx, r.Module, ver)
 	if err != nil {
 		r.Note = "proxy: " + err.Error()
@@ -590,7 +596,10 @@ func readPublished(ctx context.Context, p *Proxy, r *Row) proxyRead {
 
 func printModules(out io.Writer, rows []Row, o options, c Census) {
 	w := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
-	head := "REPOSITORY\tMODULE\tLOCAL\tPUBLISHED\t@LATEST"
+	// RESOLVED, not @LATEST: the column holds the version a consumer installs,
+	// which is resolved from the version list. Naming it after the endpoint it
+	// no longer reads would be a header that misreports its own column.
+	head := "REPOSITORY\tMODULE\tLOCAL\tPUBLISHED\tRESOLVED"
 	if o.floor != "" {
 		head += "\tVERDICT"
 	}
@@ -610,8 +619,14 @@ func printModules(out io.Writer, rows []Row, o options, c Census) {
 		if o.offline {
 			pub = "—"
 		}
+		res := dash(r.Resolved)
+		// An untagged module was resolved through the fallback endpoint, and
+		// saying so costs one word and saves the reader a guess.
+		if r.From == FromLatest && r.Resolved != "" {
+			res += " (@latest)"
+		}
 		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
-			dash(r.Repo.Slug()), r.Module, dash(r.Local.Go), pub, dash(r.Latest))
+			dash(r.Repo.Slug()), r.Module, dash(r.Local.Go), pub, res)
 		if o.floor != "" {
 			line += "\t" + string(r.Verdict)
 			tally[r.Verdict]++

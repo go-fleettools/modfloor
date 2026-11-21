@@ -87,7 +87,11 @@ func warnIfStale(w io.Writer, p *Proxy, module, version string, timeout time.Dur
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	latest, err := p.Latest(ctx, module)
+	// Resolved the way a consumer resolves it, not through the @latest
+	// endpoint: just after a release the two disagree (#16), and here the
+	// stale endpoint would report this binary CURRENT while a newer release
+	// exists — a silence that looks like a clean answer.
+	latest, _, err := p.Resolve(ctx, module)
 	if err != nil || !semver.IsValid(latest) {
 		return
 	}

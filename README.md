@@ -61,6 +61,53 @@ scope, 26 in no work tree, 0 without a module directive, 0 unreadable
 474 modules against floor 1.27.2:  ok=23  BELOW=445  no-go=6
 ```
 
+⚠ That capture is left exactly as it was taken, which is why its fifth column
+still reads `@LATEST`: the column is called `RESOLVED` now, for the reason in
+the next section. A recorded measurement is not edited to match later code —
+re-labelling an old run's output would make the record agree with the present
+by construction, which is the one thing a record is for.
+
+## The version a consumer resolves is not the `@latest` endpoint
+
+`go install m@latest` does not ask the proxy's `@latest` endpoint. It **lists**
+the versions and takes the highest release; `@latest` is consulted only when
+that list is empty, which is the case of a module with no tag. (Reference
+implementation, go1.27.4, `cmd/go/internal/modload/query.go:353-367` and
+`:572-631`.)
+
+The two endpoints are inconsistent for a while after a release. Measured
+2026-11-15, minutes after eight modules were released for GO-2026-6859:
+
+```
+$ curl -s https://proxy.golang.org/github.com/go-fleettools/unbounded/@latest
+{"Version":"v0.2.0", … "Ref":"refs/tags/v0.2.0"}
+
+$ curl -s https://proxy.golang.org/github.com/go-fleettools/unbounded/@v/list
+v0.3.0
+v0.1.0
+v0.2.0
+```
+
+Five of the eight showed it at once, so it is the normal post-release window
+and not one odd module. While this tool read `@latest`, it reported the
+**previous** release's floor as the published one.
+
+⛔ **The direction that was measured is the harmless one.** A stale `@latest`
+named an older release and produced a false `BELOW` — noise. The same mechanism
+produces a false **`ok`** whenever `@latest` names a release whose floor is fine
+while a newer, lower-floor release exists: a false clean out of a tool whose
+exit status gates a campaign, which is the failure this tool exists to prevent.
+The list is also unordered, so the maximum is taken as **semver and never as
+text** — `v0.10.0` is ahead of `v0.9.0` as semver and behind it as a string, and
+this fleet's tags cross that boundary constantly.
+
+One cost is deliberate: `@latest` is **not** read for a module that has tags.
+Reading both endpoints everywhere would add one request per module — a third
+more load on a public proxy over the fleet's 834 published modules — to report
+a disagreement the resolution no longer depends on. A test asserts that zero
+reads of `@latest` happen for a tagged module, because a test that only checked
+the version would pass while quietly paying that.
+
 Verdicts, kept apart because they call for different work:
 
 | | |
