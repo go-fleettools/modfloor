@@ -101,6 +101,26 @@ The list is also unordered, so the maximum is taken as **semver and never as
 text** — `v0.10.0` is ahead of `v0.9.0` as semver and behind it as a string, and
 this fleet's tags cross that boundary constantly.
 
+⛔ **That one is not hypothetical, and this module's own list proves it.** Read
+from `@v/list` on 2026-11-21, immediately after `v0.12.0` was released. The proxy
+serves one version per line; the 14 lines are wrapped onto two here, in the
+order they arrived, which is the part that matters:
+
+```
+v0.7.0  v0.8.1  v0.3.0  v0.6.1  v0.8.0  v0.6.0  v0.10.0
+v0.5.0  v0.12.0  v0.9.0  v0.4.0  v0.11.0  v0.1.0  v0.2.0
+```
+
+Two things are true of that list at once, and each defeats an obvious shortcut:
+
+- it is **not sorted**, so "take the last line" yields `v0.2.0`, the first
+  release this repository ever made;
+- its **textual** maximum is `v0.9.0`, because `"v0.9.0" > "v0.12.0"` as
+  strings — three releases and a `go` directive raise behind the real one.
+
+A tool reading this list by text would have reported `v0.9.0`'s floor as what
+consumers honour. The run that produced the list reports `RESOLVED v0.12.0`.
+
 One cost is deliberate: `@latest` is **not** read for a module that has tags.
 Reading both endpoints everywhere would add one request per module — a third
 more load on a public proxy over the fleet's 834 published modules — to report
