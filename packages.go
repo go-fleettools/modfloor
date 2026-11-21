@@ -128,6 +128,9 @@ func ignoredFile(name string) bool {
 // write into. A device node is the same hazard with a different shape. Only a
 // regular file, or a symlink that resolves to one, is opened — and skipping
 // something keeps the module in the population, which is the safe direction.
+// ⚠ The first test is a FAST PATH and the mutation sweep reports it as
+// surviving, correctly: with it deleted every regular file would simply be
+// asked again through os.Stat and get the same answer, one syscall later.
 func regularFile(path string, d fs.DirEntry) bool {
 	if d.Type().IsRegular() {
 		return true
@@ -157,8 +160,10 @@ func fileIsBuildable(path string) (bool, error) {
 
 func readPrologue(path string) ([]byte, error) {
 	f, err := os.Open(path)
-	// Explicit, although os.File's methods are nil-safe and would surface the
-	// same ErrInvalid from the read below: the error belongs to Open.
+	// ⚠ Explicit, and the mutation sweep reports it as surviving, correctly:
+	// os.File's methods are nil-safe, so with this deleted the read below would
+	// surface ErrInvalid instead and the caller would still get an error. It
+	// stays because the error belongs to Open and says what failed.
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +192,10 @@ func constraintOf(src []byte) constraint.Expr {
 		switch {
 		case constraint.IsGoBuild(line):
 			e, err := constraint.Parse(line)
+			// ⚠ Surviving mutation, and equivalent: constraint.Parse returns a
+			// nil expression with its error, so `return e` below would return
+			// the same nil this branch does. Kept because the two cases are the
+			// same DECISION and not the same accident.
 			if err != nil {
 				// ⛔ A constraint the toolchain would reject is not an absence
 				// of a constraint and not an absence of code. Treat the file as
@@ -241,6 +250,12 @@ func satisfiable(e constraint.Expr) bool {
 	// constraint the toolchain itself would reject — are the same decision as
 	// this one, so answering true here keeps the three in step rather than
 	// leaving a nil to panic on.
+	//
+	// ⚠ The sweep reports this one "caught by PANIC", which it warns is luck
+	// rather than a test. Here there is no other way for it to fail: calling a
+	// method on a nil interface panics, full stop. The rows that reach it —
+	// a file with no constraint, and one whose constraint does not parse — do
+	// assert the value, in TestWhatCountsAsAPackage.
 	if e == nil {
 		return true
 	}
